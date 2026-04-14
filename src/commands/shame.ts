@@ -3,8 +3,10 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
 } from "discord.js";
-import { getProfile } from "../leetify/client.js";
-import { trackedPlayers } from "../store.js";
+import {
+  requireGuild,
+  fetchGuildProfiles,
+} from "../helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("shame")
@@ -17,14 +19,14 @@ export async function execute(
 ) {
   await interaction.deferReply();
 
-  const guildId = interaction.guildId;
+  const guildId = requireGuild(interaction);
   if (!guildId) {
     await interaction.editReply("Use this in a server.");
     return;
   }
 
-  const players = trackedPlayers.get(guildId);
-  if (!players?.size) {
+  const profiles = await fetchGuildProfiles(guildId);
+  if (!profiles) {
     await interaction.editReply(
       "No tracked players. Use `/track` to add some."
     );
@@ -35,28 +37,23 @@ export async function execute(
     const results: {
       name: string;
       rating: number;
-      kd: string;
       map: string;
     }[] = [];
 
-    const profiles = await Promise.all(
-      [...players].map((steamId) => getProfile(steamId))
-    );
-
     for (const profile of profiles) {
-      const match = profile.recentMatches?.[0];
+      const match = profile.recent_matches?.[0];
       if (!match) continue;
-
       results.push({
-        name: profile.meta.name,
-        rating: match.playerStats.leetifyRating,
-        kd: `${match.playerStats.kills}/${match.playerStats.deaths}`,
-        map: match.mapName,
+        name: profile.name,
+        rating: match.leetify_rating,
+        map: match.map_name,
       });
     }
 
     if (!results.length) {
-      await interaction.editReply("No recent matches found.");
+      await interaction.editReply(
+        "No recent matches found."
+      );
       return;
     }
 
@@ -69,19 +66,20 @@ export async function execute(
       .setDescription(
         `**${worst.name}** had the worst game with a `
         + `**${worst.rating.toFixed(2)}** rating `
-        + `(${worst.kd} on ${worst.map})`
+        + `on ${worst.map}`
       )
       .addFields(
         results.map((r, i) => ({
           name: `${i + 1}. ${r.name}`,
-          value: `Rating: ${r.rating.toFixed(2)} | K/D: ${r.kd} | ${r.map}`,
+          value:
+            `Rating: ${r.rating.toFixed(2)} | ${r.map}`,
         }))
       )
-      .setFooter({ text: "Data Provided by Leetify" })
       .setTimestamp();
 
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
+    console.error("Shame error:", err);
     await interaction.editReply(
       "Failed to fetch stats. Try again later."
     );

@@ -1,6 +1,6 @@
 import { REST, Routes } from "discord.js";
 import { config } from "./config.js";
-import { commands } from "./index.js";
+import { commands } from "./commands/index.js";
 
 const rest = new REST().setToken(config.discordToken);
 

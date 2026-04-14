@@ -1,11 +1,12 @@
 import { config } from "../config.js";
 import type {
   LeetifyProfile,
-  LeetifyMatch,
+  LeetifyRecentMatch,
   LeetifyMatchDetails,
 } from "./types.js";
 
-const BASE_URL = "https://api-public.cs-prod.leetify.com";
+const BASE_URL =
+  "https://api-public.cs-prod.leetify.com";
 
 async function leetifyFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -33,8 +34,8 @@ export async function getProfile(
 
 export async function getMatchHistory(
   steamId: string
-): Promise<LeetifyMatch[]> {
-  return leetifyFetch<LeetifyMatch[]>(
+): Promise<LeetifyMatchDetails[]> {
+  return leetifyFetch<LeetifyMatchDetails[]>(
     `/v3/profile/matches?steam64_id=${steamId}`
   );
 }

@@ -1,18 +1,29 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
 } from "discord.js";
 import { getProfile } from "../leetify/client.js";
+import { getSteamId } from "../store.js";
+import {
+  leetifyEmbed,
+  resolveSteamId,
+  fmt,
+} from "../helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("stats")
-  .setDescription("Show a player's CS2 stats from Leetify")
+  .setDescription(
+    "Show a player's CS2 stats"
+  )
+  .addUserOption((opt) =>
+    opt
+      .setName("user")
+      .setDescription("Discord user (must be linked)")
+  )
   .addStringOption((opt) =>
     opt
       .setName("steamid")
-      .setDescription("Steam64 ID of the player")
-      .setRequired(true)
+      .setDescription("Steam64 ID (if not linked)")
   );
 
 export async function execute(
@@ -20,54 +31,69 @@ export async function execute(
 ) {
   await interaction.deferReply();
 
-  const steamId = interaction.options.getString("steamid", true);
+  let { steamId, userId } = resolveSteamId(interaction);
+
+  if (userId && !steamId) {
+    await interaction.editReply(
+      `<@${userId}> hasn't linked their account. `
+      + "They need to run `/link` first."
+    );
+    return;
+  }
+
+  if (!steamId) {
+    steamId = getSteamId(interaction.user.id);
+    if (!steamId) {
+      await interaction.editReply(
+        "Provide a `user` or `steamid`, "
+        + "or `/link` your own account first."
+      );
+      return;
+    }
+  }
 
   try {
-    const profile = await getProfile(steamId);
+    const p = await getProfile(steamId);
 
-    const embed = new EmbedBuilder()
-      .setTitle(profile.meta.name)
-      .setThumbnail(profile.meta.avatarUrl ?? null)
-      .setColor(0xf84982)
-      .addFields(
-        {
-          name: "Leetify Rating",
-          value: `${profile.ratings?.leetifyRating ?? "N/A"}`,
-          inline: true,
-        },
-        {
-          name: "Aim",
-          value: `${profile.ratings?.aim ?? "N/A"}`,
-          inline: true,
-        },
-        {
-          name: "Positioning",
-          value: `${profile.ratings?.positioning ?? "N/A"}`,
-          inline: true,
-        },
-        {
-          name: "Utility",
-          value: `${profile.ratings?.utility ?? "N/A"}`,
-          inline: true,
-        },
-        {
-          name: "Clutch",
-          value: `${profile.ratings?.clutch ?? "N/A"}`,
-          inline: true,
-        },
-        {
-          name: "Premier",
-          value: `${profile.ranks?.premier ?? "N/A"}`,
-          inline: true,
-        }
-      )
-      .setFooter({ text: "Data Provided by Leetify" })
-      .setTimestamp();
+    const embed = leetifyEmbed(p.name).addFields(
+      {
+        name: "Leetify Rating",
+        value: fmt(p.ranks?.leetify),
+        inline: true,
+      },
+      {
+        name: "Aim",
+        value: fmt(p.rating?.aim),
+        inline: true,
+      },
+      {
+        name: "Positioning",
+        value: fmt(p.rating?.positioning),
+        inline: true,
+      },
+      {
+        name: "Utility",
+        value: fmt(p.rating?.utility),
+        inline: true,
+      },
+      {
+        name: "Clutch",
+        value: fmt(p.rating?.clutch, 2),
+        inline: true,
+      },
+      {
+        name: "Premier",
+        value: p.ranks?.premier?.toLocaleString()
+          ?? "N/A",
+        inline: true,
+      }
+    );
 
     await interaction.editReply({ embeds: [embed] });
-  } catch (err) {
+  } catch {
     await interaction.editReply(
       `Failed to fetch stats for \`${steamId}\`. `
+      + "Is the Steam ID correct and the profile "
       + "Is the Steam ID correct and the profile on Leetify?"
     );
   }

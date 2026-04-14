@@ -3,30 +3,10 @@ import {
   Collection,
   Events,
   GatewayIntentBits,
-  ChatInputCommandInteraction,
-  SlashCommandBuilder,
 } from "discord.js";
 import { config } from "./config.js";
-import { loadPlayers } from "./store.js";
-
-import * as stats from "./commands/stats.js";
-import * as compare from "./commands/compare.js";
-import * as shame from "./commands/shame.js";
-import * as leaderboard from "./commands/leaderboard.js";
-import * as track from "./commands/track.js";
-
-type Command = {
-  data: SlashCommandBuilder;
-  execute: (i: ChatInputCommandInteraction) => Promise<void>;
-};
-
-export const commands: [string, Command][] = [
-  ["stats", stats],
-  ["compare", compare],
-  ["shame", shame],
-  ["leaderboard", leaderboard],
-  ["track", track],
-];
+import { commands, type Command } from "./commands/index.js";
+import { startWatcher } from "./watcher.js";
 
 const commandMap = new Collection<string, Command>();
 for (const [name, cmd] of commands) {
@@ -39,6 +19,7 @@ const client = new Client({
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Jomify online as ${c.user.tag}`);
+  startWatcher(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -63,5 +44,4 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-loadPlayers();
 client.login(config.discordToken);

@@ -1,28 +1,43 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
 } from "discord.js";
 import { getProfile } from "../leetify/client.js";
+import { getSteamId } from "../store.js";
+import { leetifyEmbed, fmt } from "../helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("compare")
   .setDescription("Compare two players side by side")
+  .addUserOption((opt) =>
+    opt
+      .setName("user1")
+      .setDescription("First player (Discord user)")
+  )
+  .addUserOption((opt) =>
+    opt
+      .setName("user2")
+      .setDescription("Second player (Discord user)")
+  )
   .addStringOption((opt) =>
     opt
       .setName("player1")
-      .setDescription("Steam64 ID of first player")
-      .setRequired(true)
+      .setDescription("First player Steam64 ID")
   )
   .addStringOption((opt) =>
     opt
       .setName("player2")
-      .setDescription("Steam64 ID of second player")
-      .setRequired(true)
+      .setDescription("Second player Steam64 ID")
   );
 
-function fmt(val: number | undefined): string {
-  return val !== undefined ? val.toFixed(1) : "N/A";
+function resolveId(
+  interaction: ChatInputCommandInteraction,
+  userOpt: string,
+  steamOpt: string
+): string | null {
+  const user = interaction.options.getUser(userOpt);
+  if (user) return getSteamId(user.id);
+  return interaction.options.getString(steamOpt);
 }
 
 export async function execute(
@@ -30,8 +45,16 @@ export async function execute(
 ) {
   await interaction.deferReply();
 
-  const id1 = interaction.options.getString("player1", true);
-  const id2 = interaction.options.getString("player2", true);
+  const id1 = resolveId(interaction, "user1", "player1");
+  const id2 = resolveId(interaction, "user2", "player2");
+
+  if (!id1 || !id2) {
+    await interaction.editReply(
+      "Need two players. Use `user1`/`user2` or "
+      + "`player1`/`player2` (Steam64 IDs)."
+    );
+    return;
+  }
 
   try {
     const [p1, p2] = await Promise.all([
@@ -40,29 +63,28 @@ export async function execute(
     ]);
 
     const fields = [
-      "leetifyRating",
-      "aim",
-      "positioning",
-      "utility",
-      "clutch",
+      ["Leetify Rating", "leetify"],
+      ["Aim", "aim"],
+      ["Positioning", "positioning"],
+      ["Utility", "utility"],
+      ["Clutch", "clutch"],
     ] as const;
 
-    const lines = fields.map((f) => {
-      const v1 = p1.ratings?.[f];
-      const v2 = p2.ratings?.[f];
-      const label = f.charAt(0).toUpperCase() + f.slice(1);
+    const lines = fields.map(([label, key]) => {
+      const v1 = key === "leetify"
+        ? p1.ranks?.[key]
+        : p1.rating?.[key];
+      const v2 = key === "leetify"
+        ? p2.ranks?.[key]
+        : p2.rating?.[key];
       return `**${label}**: ${fmt(v1)} vs ${fmt(v2)}`;
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(`${p1.meta.name} vs ${p2.meta.name}`)
-      .setColor(0xf84982)
-      .setDescription(lines.join("\n"))
-      .setFooter({ text: "Data Provided by Leetify" })
-      .setTimestamp();
+    const embed = leetifyEmbed(`${p1.name} vs ${p2.name}`)
+      .setDescription(lines.join("\n"));
 
     await interaction.editReply({ embeds: [embed] });
-  } catch (err) {
+  } catch {
     await interaction.editReply(
       "Failed to fetch one or both profiles. "
       + "Check the Steam IDs are correct."

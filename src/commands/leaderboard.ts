@@ -1,15 +1,23 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  EmbedBuilder,
 } from "discord.js";
-import { getProfile } from "../leetify/client.js";
-import { trackedPlayers } from "../store.js";
+import {
+  saveSnapshots,
+  saveLeaderboardSnapshot,
+  getLastLeaderboard,
+  type PlayerSnapshot,
+} from "../store.js";
+import {
+  requireGuild,
+  fetchGuildProfiles,
+  leetifyEmbed,
+} from "../helpers.js";
 
 export const data = new SlashCommandBuilder()
   .setName("leaderboard")
   .setDescription(
-    "Rank tracked players by Leetify rating"
+    "Rank tracked players by Premier rating"
   );
 
 export async function execute(
@@ -17,14 +25,14 @@ export async function execute(
 ) {
   await interaction.deferReply();
 
-  const guildId = interaction.guildId;
+  const guildId = requireGuild(interaction);
   if (!guildId) {
     await interaction.editReply("Use this in a server.");
     return;
   }
 
-  const players = trackedPlayers.get(guildId);
-  if (!players?.size) {
+  const profiles = await fetchGuildProfiles(guildId);
+  if (!profiles) {
     await interaction.editReply(
       "No tracked players. Use `/track` to add some."
     );
@@ -32,35 +40,86 @@ export async function execute(
   }
 
   try {
-    const profiles = await Promise.all(
-      [...players].map((steamId) => getProfile(steamId))
+    const snapshots: PlayerSnapshot[] = profiles.map(
+      (p) => ({
+        steamId: p.steam64_id,
+        name: p.name,
+        premier: p.ranks?.premier ?? null,
+        leetify: p.ranks?.leetify ?? null,
+        aim: p.rating?.aim,
+        positioning: p.rating?.positioning,
+        utility: p.rating?.utility,
+        clutch: p.rating?.clutch,
+      })
+    );
+    saveSnapshots(snapshots);
+
+    const previous = getLastLeaderboard(guildId);
+    const prevMap = new Map(
+      previous.map((e) => [e.steamId, e.premier])
     );
 
     const entries = profiles
       .map((p) => ({
-        name: p.meta.name,
-        rating: p.ratings?.leetifyRating ?? 0,
-        premier: p.ranks?.premier,
+        steamId: p.steam64_id,
+        name: p.name,
+        premier: p.ranks?.premier ?? 0,
       }))
-      .sort((a, b) => b.rating - a.rating);
+      .sort((a, b) => b.premier - a.premier);
 
-    const medals = ["🥇", "🥈", "🥉"];
+    saveLeaderboardSnapshot(
+      guildId,
+      entries.map((e) => ({
+        steamId: e.steamId,
+        premier: e.premier,
+      }))
+    );
+
+    const prevOrder = [...previous]
+      .sort(
+        (a, b) => (b.premier ?? 0) - (a.premier ?? 0)
+      )
+      .map((e) => e.steamId);
+
+    const medals = ["\u{1f947}", "\u{1f948}", "\u{1f949}"];
 
     const lines = entries.map((e, i) => {
       const prefix = medals[i] ?? `${i + 1}.`;
-      const premier = e.premier ? ` (${e.premier})` : "";
-      return `${prefix} **${e.name}** — ${e.rating.toFixed(2)}${premier}`;
+      const rating = e.premier
+        ? e.premier.toLocaleString()
+        : "Unranked";
+
+      let change = "";
+      const prev = prevMap.get(e.steamId);
+      if (prev != null && e.premier) {
+        const diff = e.premier - prev;
+        if (diff > 0) change = ` (+${diff})`;
+        else if (diff < 0) change = ` (${diff})`;
+      }
+
+      let posChange = "";
+      if (prevOrder.length) {
+        const oldPos = prevOrder.indexOf(e.steamId);
+        if (oldPos !== -1 && oldPos !== i) {
+          const moved = oldPos - i;
+          posChange = moved > 0
+            ? " \u2B06\uFE0F"
+            : " \u2B07\uFE0F";
+        }
+      }
+
+      return (
+        `${prefix} **${e.name}** \u2014 `
+        + `${rating}${change}${posChange}`
+      );
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle("Leaderboard")
-      .setColor(0xf84982)
-      .setDescription(lines.join("\n"))
-      .setFooter({ text: "Data Provided by Leetify" })
-      .setTimestamp();
+    const embed = leetifyEmbed("Leaderboard")
+      .setDescription(lines.join("\n"));
 
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
+    console.error("Leaderboard error:", err);
     await interaction.editReply(
       "Failed to fetch stats. Try again later."
     );
