@@ -5,4 +5,4 @@ dist/
 *.db-shm
 *.db-wal
 data.json
-.claude/settings.local.json
+.claude/
