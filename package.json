@@ -1,0 +1,16 @@
+{
+  "name": "jomify",
+  "version": "1.0.0",
+  "description": "CS2 stats Discord bot powered by Leetify",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "register": "bun run src/register.ts"
+  },
+  "keywords": ["discord", "cs2", "leetify", "stats"],
+  "author": "Jom",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.26.3"
+  }
+}
