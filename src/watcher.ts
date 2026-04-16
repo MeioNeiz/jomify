@@ -1,104 +1,65 @@
+import { type Client, EmbedBuilder } from "discord.js";
 import {
-  Client,
-  EmbedBuilder,
-  TextChannel,
-} from "discord.js";
+  checkBigMatch,
+  checkStreakAlerts,
+  mentionOrName,
+  scanOpponents,
+  sendToGuilds,
+} from "./alerts.js";
 import {
-  getProfile,
-  getMatchHistory,
   getMatchDetails,
+  getMatchHistory,
+  getProfile,
+  LeetifyUnavailableError,
 } from "./leetify/client.js";
+import type { LeetifyMatchDetails, LeetifyProfile } from "./leetify/types.js";
+import log from "./logger.js";
 import {
   getAllTrackedSteamIds,
-  getGuildsForSteamId,
-  getNotifyChannel,
+  getPlayerStatAverages,
+  getStoredMatchCount,
   isMatchProcessed,
   markMatchProcessed,
-  getDiscordId,
   saveMatchDetails,
-  getPlayerStatAverages,
-  getProcessedMatchCount,
+  updatePlayerStreak,
 } from "./store.js";
-import type { LeetifyProfile } from "./leetify/types.js";
 
 const BAD_GAME_RATING = -0.05;
 const GREAT_GAME_RATING = 0.08;
 
 const lastKnownPremier = new Map<string, number>();
 
-async function sendToGuilds(
-  client: Client,
-  steamId: string,
-  embed: EmbedBuilder
-) {
-  const guilds = getGuildsForSteamId(steamId);
-  for (const guildId of guilds) {
-    const channelId = getNotifyChannel(guildId);
-    if (!channelId) continue;
-    try {
-      const channel = await client.channels.fetch(
-        channelId
-      );
-      if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
-          embeds: [embed],
-        });
-      }
-    } catch (err) {
-      console.error(
-        `Failed to send to ${guildId}/${channelId}:`,
-        err
-      );
-    }
-  }
-}
-
-function mentionOrName(
-  steamId: string,
-  name: string
-): string {
-  const discordId = getDiscordId(steamId);
-  return discordId ? `<@${discordId}>` : `**${name}**`;
-}
-
 // Bulk load all match history for a new player.
-// Call this when a player is first tracked.
-export async function backfillPlayer(
-  steamId: string
-): Promise<number> {
-  const stored = getProcessedMatchCount(steamId);
+export async function backfillPlayer(steamId: string): Promise<number> {
+  const stored = getStoredMatchCount(steamId);
   if (stored > 0) return stored;
 
   try {
     const matches = await getMatchHistory(steamId);
     for (const match of matches) {
-      saveMatchDetails(match);
-      markMatchProcessed(
-        match.id, steamId, match.finished_at
-      );
+      try {
+        saveMatchDetails(match);
+        markMatchProcessed(match.id, steamId, match.finished_at);
+      } catch {
+        // Skip this match, continue with rest
+      }
     }
 
-    // Seed premier rank
     const profile = await getProfile(steamId);
     if (profile.ranks?.premier != null) {
-      lastKnownPremier.set(
-        steamId, profile.ranks.premier
-      );
+      lastKnownPremier.set(steamId, profile.ranks.premier);
     }
 
     return matches.length;
   } catch (err) {
-    console.error(
-      `Backfill failed for ${steamId}:`, err
-    );
+    log.error({ steamId, err }, "Backfill failed");
     return 0;
   }
 }
 
-async function checkPlayer(
-  client: Client,
-  steamId: string
-) {
+// ── Main check loop ──
+
+async function checkPlayer(client: Client, steamId: string) {
   let profile: LeetifyProfile;
   try {
     profile = await getProfile(steamId);
@@ -112,21 +73,18 @@ async function checkPlayer(
   const currentPremier = profile.ranks?.premier;
   const prevPremier = lastKnownPremier.get(steamId);
 
-  if (
-    currentPremier != null
-    && prevPremier != null
-    && currentPremier !== prevPremier
-  ) {
+  if (currentPremier != null && prevPremier != null && currentPremier !== prevPremier) {
     const diff = currentPremier - prevPremier;
     if (diff > 0) {
       const embed = new EmbedBuilder()
         .setTitle("Rank Up!")
         .setColor(0x00ff00)
         .setDescription(
-          `${player} ranked up!\n\n`
-          + `**${prevPremier.toLocaleString()}** \u2192 `
-          + `**${currentPremier.toLocaleString()}** `
-          + `(+${diff})`
+          `${player} ranked up!\n\n` +
+            `**${prevPremier.toLocaleString()}` +
+            `** \u2192 ` +
+            `**${currentPremier.toLocaleString()}` +
+            `** (+${diff})`,
         )
         .setTimestamp();
       await sendToGuilds(client, steamId, embed);
@@ -139,38 +97,40 @@ async function checkPlayer(
 
   // Check recent matches for new ones
   for (const match of profile.recent_matches ?? []) {
-    if (isMatchProcessed(match.id, steamId)) continue;
+    if (isMatchProcessed(match.id, steamId)) {
+      continue;
+    }
 
-    markMatchProcessed(
-      match.id, steamId, match.finished_at
-    );
+    markMatchProcessed(match.id, steamId, match.finished_at);
 
     // Fetch and store full match details
+    let details: LeetifyMatchDetails | null = null;
     try {
-      const details = await getMatchDetails(match.id);
+      details = await getMatchDetails(match.id);
       saveMatchDetails(details);
     } catch (err) {
-      console.error(
-        `Failed to fetch match ${match.id}:`, err
-      );
+      log.warn({ matchId: match.id, err }, "Failed to fetch match");
     }
 
     const avgs = getPlayerStatAverages(steamId);
 
     if (match.leetify_rating <= BAD_GAME_RATING) {
       let desc =
-        `${player} had a shocker on `
-        + `**${match.map_name}**\n\n`
-        + `Rating: **${match.leetify_rating.toFixed(2)}**\n`
-        + `Score: ${match.score[0]}-${match.score[1]} `
-        + `(${match.outcome})`;
+        `${player} had a shocker on ` +
+        `**${match.map_name}**\n\n` +
+        `Rating: **` +
+        `${match.leetify_rating.toFixed(2)}` +
+        `**\n` +
+        `Score: ${match.score[0]}` +
+        `-${match.score[1]} ` +
+        `(${match.outcome})`;
 
       if (avgs && avgs.avg_rating != null) {
-        const diff =
-          match.leetify_rating - avgs.avg_rating;
+        const diff = match.leetify_rating - avgs.avg_rating;
         desc +=
-          `\nAvg rating: ${avgs.avg_rating.toFixed(2)} `
-          + `(${diff.toFixed(2)} from avg)`;
+          `\nAvg rating: ` +
+          `${avgs.avg_rating.toFixed(2)} ` +
+          `(${diff.toFixed(2)} from avg)`;
       }
 
       const embed = new EmbedBuilder()
@@ -183,18 +143,21 @@ async function checkPlayer(
 
     if (match.leetify_rating >= GREAT_GAME_RATING) {
       let desc =
-        `${player} went off on `
-        + `**${match.map_name}**\n\n`
-        + `Rating: **${match.leetify_rating.toFixed(2)}**\n`
-        + `Score: ${match.score[0]}-${match.score[1]} `
-        + `(${match.outcome})`;
+        `${player} went off on ` +
+        `**${match.map_name}**\n\n` +
+        `Rating: **` +
+        `${match.leetify_rating.toFixed(2)}` +
+        `**\n` +
+        `Score: ${match.score[0]}` +
+        `-${match.score[1]} ` +
+        `(${match.outcome})`;
 
       if (avgs && avgs.avg_rating != null) {
-        const diff =
-          match.leetify_rating - avgs.avg_rating;
+        const diff = match.leetify_rating - avgs.avg_rating;
         desc +=
-          `\nAvg rating: ${avgs.avg_rating.toFixed(2)} `
-          + `(+${diff.toFixed(2)} above avg)`;
+          `\nAvg rating: ` +
+          `${avgs.avg_rating.toFixed(2)} ` +
+          `(+${diff.toFixed(2)} above avg)`;
       }
 
       const embed = new EmbedBuilder()
@@ -204,26 +167,55 @@ async function checkPlayer(
         .setTimestamp();
       await sendToGuilds(client, steamId, embed);
     }
+
+    // Big match alerts
+    if (details) {
+      const achievements = checkBigMatch(details, steamId);
+      if (achievements.length > 0) {
+        const desc = `${player} on **${match.map_name}**\n\n${achievements.join("\n")}`;
+        const embed = new EmbedBuilder()
+          .setTitle("Monster Game!")
+          .setColor(0x00ff00)
+          .setDescription(desc)
+          .setTimestamp();
+        await sendToGuilds(client, steamId, embed);
+      }
+    }
+
+    // Win/loss streak tracking
+    const outcome = match.outcome as "win" | "loss" | "tie";
+    if (outcome === "win" || outcome === "loss" || outcome === "tie") {
+      const streak = updatePlayerStreak(steamId, outcome);
+      await checkStreakAlerts(client, steamId, player, streak);
+    }
+
+    // Auto-scan opponents for sus players
+    if (details) {
+      await scanOpponents(client, steamId, details);
+    }
   }
 }
 
 export function startWatcher(client: Client) {
-  // Seed premier ranks for existing players on startup
-  // (no backfill — that happens when they're first
-  // tracked)
+  // Seed premier ranks — sequential, no retries on failure
   const steamIds = getAllTrackedSteamIds();
-  for (const id of steamIds) {
-    getProfile(id)
-      .then((p) => {
+  (async () => {
+    for (const id of steamIds) {
+      try {
+        const p = await getProfile(id);
         if (p.ranks?.premier != null) {
           lastKnownPremier.set(id, p.ranks.premier);
         }
         for (const m of p.recent_matches ?? []) {
           markMatchProcessed(m.id, id, m.finished_at);
         }
-      })
-      .catch(() => {});
-  }
+      } catch (err) {
+        if (err instanceof LeetifyUnavailableError) break;
+        log.warn({ steamId: id }, "Startup seed failed");
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  })();
 
   const INTERVAL = 5 * 60 * 1000;
 
@@ -235,8 +227,5 @@ export function startWatcher(client: Client) {
     }
   }, INTERVAL);
 
-  console.log(
-    `Watcher started \u2014 polling ${steamIds.length} `
-    + `player(s) every 5 minutes`
-  );
+  log.info({ players: steamIds.length }, "Watcher started");
 }

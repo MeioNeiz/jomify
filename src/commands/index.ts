@@ -1,20 +1,27 @@
-import {
+import type {
   ChatInputCommandInteraction,
   SlashCommandBuilder,
+  SlashCommandOptionsOnlyBuilder,
+  SlashCommandSubcommandsOnlyBuilder,
 } from "discord.js";
-
-import * as stats from "./stats.js";
 import * as compare from "./compare.js";
-import * as shame from "./shame.js";
-import * as leaderboard from "./leaderboard.js";
-import * as track from "./track.js";
 import * as flash from "./flash.js";
-import * as link from "./link.js";
-import * as setchannel from "./setchannel.js";
 import * as importCmd from "./import.js";
+import * as inv from "./inv.js";
+import * as leaderboard from "./leaderboard.js";
+import * as link from "./link.js";
+import * as maps from "./maps.js";
+import * as setchannel from "./setchannel.js";
+import * as shame from "./shame.js";
+import * as stats from "./stats.js";
+import * as sus from "./sus.js";
+import * as track from "./track.js";
 
 export type Command = {
-  data: SlashCommandBuilder;
+  data:
+    | SlashCommandBuilder
+    | SlashCommandOptionsOnlyBuilder
+    | SlashCommandSubcommandsOnlyBuilder;
   execute: (i: ChatInputCommandInteraction) => Promise<void>;
 };
 
@@ -28,4 +35,7 @@ export const commands: [string, Command][] = [
   ["link", link],
   ["setchannel", setchannel],
   ["import", importCmd],
+  ["sus", sus],
+  ["inv", inv],
+  ["maps", maps],
 ];

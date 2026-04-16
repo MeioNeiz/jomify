@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/cli.ts",
+    "src/commands/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.test.ts",
+    "tests/preload.ts"
+  ],
+  "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "ignoreDependencies": ["pino-pretty"]
+}

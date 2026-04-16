@@ -6,3 +6,5 @@ dist/
 *.db-wal
 data.json
 .claude/
+*.log
+CLAUDE.md

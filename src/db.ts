@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
-import { join } from "path";
+import { join } from "node:path";
 
-const DB_PATH = join(import.meta.dir, "..", "jomify.db");
+const DB_PATH =
+  process.env.JOMIFY_DB === ":memory:"
+    ? ":memory:"
+    : join(import.meta.dir, "..", "jomify.db");
 
 const db = new Database(DB_PATH, { create: true });
 db.run("PRAGMA journal_mode = WAL");
@@ -134,6 +137,37 @@ db.run(`
 db.run(`
   CREATE INDEX IF NOT EXISTS idx_matches_finished
     ON matches (finished_at)
+`);
+
+// API usage tracking
+db.run(`
+  CREATE TABLE IF NOT EXISTS api_usage (
+    endpoint    TEXT NOT NULL,
+    day         TEXT NOT NULL DEFAULT (date('now')),
+    count       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (endpoint, day)
+  )
+`);
+
+// Track which opponents we've already scanned
+db.run(`
+  CREATE TABLE IF NOT EXISTS analysed_opponents (
+    match_id  TEXT NOT NULL,
+    steam_id  TEXT NOT NULL,
+    PRIMARY KEY (match_id, steam_id)
+  )
+`);
+
+// Win/loss streak tracking
+db.run(`
+  CREATE TABLE IF NOT EXISTS player_streaks (
+    steam_id          TEXT PRIMARY KEY,
+    streak_type       TEXT NOT NULL DEFAULT 'win',
+    streak_count      INTEGER NOT NULL DEFAULT 0,
+    last_alerted_count INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT NOT NULL
+      DEFAULT (datetime('now'))
+  )
 `);
 
 export default db;

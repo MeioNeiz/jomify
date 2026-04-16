@@ -1,11 +1,9 @@
-import {
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-} from "discord.js";
-import { addTrackedPlayer } from "../store.js";
-import { getProfile } from "../leetify/client.js";
+import { SlashCommandBuilder } from "discord.js";
 import { requireGuild } from "../helpers.js";
+import { getProfile } from "../leetify/client.js";
+import { addTrackedPlayer } from "../store.js";
 import { backfillPlayer } from "../watcher.js";
+import { wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
   .setName("import")
@@ -13,31 +11,22 @@ export const data = new SlashCommandBuilder()
   .addStringOption((opt) =>
     opt
       .setName("steamids")
-      .setDescription(
-        "Steam64 IDs separated by spaces or commas"
-      )
-      .setRequired(true)
+      .setDescription("Steam64 IDs separated by spaces or commas")
+      .setRequired(true),
   );
 
-export async function execute(
-  interaction: ChatInputCommandInteraction
-) {
-  await interaction.deferReply();
-
+export const execute = wrapCommand(async (interaction) => {
   const guildId = requireGuild(interaction);
   if (!guildId) {
     await interaction.editReply("Use this in a server.");
     return;
   }
 
-  const raw = interaction.options.getString(
-    "steamids", true
-  );
+  const raw = interaction.options.getString("steamids", true);
   const ids = raw
     .split(/[\s,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-
   if (!ids.length) {
     await interaction.editReply("No valid IDs provided.");
     return;
@@ -49,19 +38,13 @@ export async function execute(
       const profile = await getProfile(id);
       addTrackedPlayer(guildId, id);
       const count = await backfillPlayer(id);
-      results.push(
-        `\u2705 **${profile.name}** \u2014 `
-        + `${count} matches loaded`
-      );
+      results.push(`\u2705 **${profile.name}** \u2014 ${count} matches loaded`);
     } catch {
-      results.push(
-        `\u274C \`${id}\` \u2014 not found on Leetify`
-      );
+      results.push(`\u274C \`${id}\` \u2014 not found on Leetify`);
     }
   }
 
   await interaction.editReply(
-    `**Imported ${ids.length} player(s):**\n`
-    + results.join("\n")
+    `**Imported ${ids.length} player(s):**\n${results.join("\n")}`,
   );
-}
+});

@@ -1,46 +1,39 @@
-import {
-  Client,
-  Collection,
-  Events,
-  GatewayIntentBits,
-} from "discord.js";
+import { Client, Collection, Events, GatewayIntentBits } from "discord.js";
+import { type Command, commands } from "./commands/index.js";
 import { config } from "./config.js";
-import { commands, type Command } from "./commands/index.js";
+import log from "./logger.js";
 import { startWatcher } from "./watcher.js";
+import { startWeeklyLeaderboard } from "./weekly.js";
 
 const commandMap = new Collection<string, Command>();
-for (const [name, cmd] of commands) {
-  commandMap.set(name, cmd);
-}
+for (const [name, cmd] of commands) commandMap.set(name, cmd);
 
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`Jomify online as ${c.user.tag}`);
+  log.info({ tag: c.user.tag }, "Jomify online");
   startWatcher(client);
+  startWeeklyLeaderboard(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-
   const command = commandMap.get(interaction.commandName);
   if (!command) return;
-
   try {
     await command.execute(interaction);
   } catch (err) {
-    console.error(
-      `Error in /${interaction.commandName}:`, err
-    );
-    const reply = interaction.deferred || interaction.replied
-      ? interaction.editReply
-      : interaction.reply;
-    await reply.call(
-      interaction,
-      "Something went wrong."
-    );
+    if ((err as { code?: number })?.code === 10062) return;
+    log.error({ cmd: interaction.commandName, err }, "Unhandled command error");
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply("Something went wrong.");
+      } else {
+        await interaction.reply("Something went wrong.");
+      }
+    } catch {
+      /* interaction gone */
+    }
   }
 });
 

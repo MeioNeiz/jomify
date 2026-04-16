@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { fmt, requireGuild, BRAND_COLOUR } from "../src/helpers.js";
+import { describe, expect, test } from "bun:test";
+import { BRAND_COLOUR, fmt, requireGuild } from "../src/helpers.js";
 
 describe("fmt", () => {
   test("formats number with default 1 decimal", () => {

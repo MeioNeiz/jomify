@@ -1,49 +1,95 @@
 import { config } from "../config.js";
-import type {
-  LeetifyProfile,
-  LeetifyRecentMatch,
-  LeetifyMatchDetails,
-} from "./types.js";
+import log from "../logger.js";
+import { trackApiCall } from "../store.js";
+import type { LeetifyMatchDetails, LeetifyProfile } from "./types.js";
 
-const BASE_URL =
-  "https://api-public.cs-prod.leetify.com";
+const BASE_URL = "https://api-public.cs-prod.leetify.com";
+const MAX_RETRIES = 3;
+
+// ── Circuit breaker ──
+
+let circuitOpen = false;
+let circuitOpensAt = 0;
+const CIRCUIT_COOLDOWN = 60_000; // 1 min
+
+function tripCircuit() {
+  if (!circuitOpen) {
+    log.warn("Leetify circuit breaker tripped — pausing requests for 1 min");
+  }
+  circuitOpen = true;
+  circuitOpensAt = Date.now() + CIRCUIT_COOLDOWN;
+}
+
+function checkCircuit() {
+  if (!circuitOpen) return;
+  if (Date.now() >= circuitOpensAt) {
+    circuitOpen = false;
+    log.info("Leetify circuit breaker reset");
+  }
+}
+
+export class LeetifyUnavailableError extends Error {
+  constructor() {
+    super("Leetify API unavailable");
+  }
+}
+
+// ── Fetch with retries ──
 
 async function leetifyFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: {
-      Authorization: `Bearer ${config.leetifyApiKey}`,
-    },
-  });
+  checkCircuit();
+  if (circuitOpen) throw new LeetifyUnavailableError();
 
-  if (!res.ok) {
-    throw new Error(
-      `Leetify API error: ${res.status} ${res.statusText}`
-    );
+  const endpoint = path.split("?")[0];
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    trackApiCall(`leetify:${endpoint}`);
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: { Authorization: `Bearer ${config.leetifyApiKey}` },
+    });
+
+    const retryable = res.status === 429 || res.status === 502 || res.status === 503;
+    if (retryable && attempt < MAX_RETRIES) {
+      const after = res.headers.get("Retry-After");
+      const wait = after ? Number(after) * 1000 : 2000 * (attempt + 1);
+      log.debug({ status: res.status, endpoint, attempt }, "Leetify retrying");
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+
+    if (!res.ok) {
+      if (retryable) tripCircuit();
+      log.warn(
+        { status: res.status, endpoint, attempts: attempt + 1 },
+        "Leetify API error",
+      );
+      throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
+    }
+
+    return res.json() as Promise<T>;
   }
 
-  return res.json() as Promise<T>;
+  tripCircuit();
+  throw new Error("Leetify API: max retries exceeded");
 }
 
-export async function getProfile(
-  steamId: string
-): Promise<LeetifyProfile> {
-  return leetifyFetch<LeetifyProfile>(
-    `/v3/profile?steam64_id=${steamId}`
-  );
+// ── Profile cache (TTL: 5 min) ──
+
+const PROFILE_TTL = 5 * 60 * 1000;
+const profileCache = new Map<string, { data: LeetifyProfile; expiresAt: number }>();
+
+export async function getProfile(steamId: string): Promise<LeetifyProfile> {
+  const cached = profileCache.get(steamId);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const data = await leetifyFetch<LeetifyProfile>(`/v3/profile?steam64_id=${steamId}`);
+  profileCache.set(steamId, { data, expiresAt: Date.now() + PROFILE_TTL });
+  return data;
 }
 
-export async function getMatchHistory(
-  steamId: string
-): Promise<LeetifyMatchDetails[]> {
-  return leetifyFetch<LeetifyMatchDetails[]>(
-    `/v3/profile/matches?steam64_id=${steamId}`
-  );
+export async function getMatchHistory(steamId: string): Promise<LeetifyMatchDetails[]> {
+  return leetifyFetch<LeetifyMatchDetails[]>(`/v3/profile/matches?steam64_id=${steamId}`);
 }
 
-export async function getMatchDetails(
-  gameId: string
-): Promise<LeetifyMatchDetails> {
-  return leetifyFetch<LeetifyMatchDetails>(
-    `/v2/matches/${gameId}`
-  );
+export async function getMatchDetails(gameId: string): Promise<LeetifyMatchDetails> {
+  return leetifyFetch<LeetifyMatchDetails>(`/v2/matches/${gameId}`);
 }

@@ -1,15 +1,13 @@
-import {
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-} from "discord.js";
+import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
 import {
   addTrackedPlayer,
-  removeTrackedPlayer,
-  getTrackedPlayers,
-  getSteamId,
   getAllLinkedAccounts,
+  getSteamId,
+  getTrackedPlayers,
+  removeTrackedPlayer,
 } from "../store.js";
 import { backfillPlayer } from "../watcher.js";
+import { wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
   .setName("track")
@@ -19,62 +17,34 @@ export const data = new SlashCommandBuilder()
       .setName("add")
       .setDescription("Start tracking a player")
       .addUserOption((opt) =>
-        opt
-          .setName("user")
-          .setDescription("Discord user (must be linked)")
+        opt.setName("user").setDescription("Discord user (must be linked)"),
       )
       .addStringOption((opt) =>
-        opt
-          .setName("steamid")
-          .setDescription("Steam64 ID (if not linked)")
-      )
+        opt.setName("steamid").setDescription("Steam64 ID (if not linked)"),
+      ),
   )
   .addSubcommand((sub) =>
     sub
       .setName("remove")
       .setDescription("Stop tracking a player")
-      .addUserOption((opt) =>
-        opt
-          .setName("user")
-          .setDescription("Discord user")
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName("steamid")
-          .setDescription("Steam64 ID")
-      )
+      .addUserOption((opt) => opt.setName("user").setDescription("Discord user"))
+      .addStringOption((opt) => opt.setName("steamid").setDescription("Steam64 ID")),
   )
+  .addSubcommand((sub) => sub.setName("list").setDescription("Show all tracked players"))
   .addSubcommand((sub) =>
-    sub
-      .setName("list")
-      .setDescription("Show all tracked players")
-  )
-  .addSubcommand((sub) =>
-    sub
-      .setName("all")
-      .setDescription(
-        "Track all linked users in this server"
-      )
+    sub.setName("all").setDescription("Track all linked users in this server"),
   );
 
-function resolveSteamId(
-  interaction: ChatInputCommandInteraction
-): string | null {
+function resolveSteamId(interaction: ChatInputCommandInteraction): string | null {
   const user = interaction.options.getUser("user");
-  if (user) {
-    const steamId = getSteamId(user.id);
-    if (!steamId) return null;
-    return steamId;
-  }
+  if (user) return getSteamId(user.id);
   return interaction.options.getString("steamid");
 }
 
-export async function execute(
-  interaction: ChatInputCommandInteraction
-) {
+export const execute = wrapCommand(async (interaction) => {
   const guildId = interaction.guildId;
   if (!guildId) {
-    await interaction.reply("Use this in a server.");
+    await interaction.editReply("Use this in a server.");
     return;
   }
 
@@ -85,49 +55,36 @@ export async function execute(
     const steamId = resolveSteamId(interaction);
     if (!steamId) {
       const msg = user
-        ? `<@${user.id}> hasn't linked their account. `
-          + "They need to run `/link` first."
+        ? `<@${user.id}> hasn't linked. They need to run \`/link\` first.`
         : "Provide a `user` or `steamid`.";
-      await interaction.reply(msg);
+      await interaction.editReply(msg);
       return;
     }
-    await interaction.deferReply();
     addTrackedPlayer(guildId, steamId);
     const count = await backfillPlayer(steamId);
-    const label = user
-      ? `<@${user.id}>`
-      : `\`${steamId}\``;
-    await interaction.editReply(
-      `Now tracking ${label}. `
-      + `Loaded ${count} matches.`
-    );
+    const label = user ? `<@${user.id}>` : `\`${steamId}\``;
+    await interaction.editReply(`Now tracking ${label}. Loaded ${count} matches.`);
   } else if (sub === "remove") {
     const user = interaction.options.getUser("user");
     const steamId = resolveSteamId(interaction);
     if (!steamId) {
       const msg = user
-        ? `<@${user.id}> hasn't linked their account.`
+        ? `<@${user.id}> hasn't linked.`
         : "Provide a `user` or `steamid`.";
-      await interaction.reply(msg);
+      await interaction.editReply(msg);
       return;
     }
     removeTrackedPlayer(guildId, steamId);
-    const label = user
-      ? `<@${user.id}>`
-      : `\`${steamId}\``;
-    await interaction.reply(
-      `Stopped tracking ${label}.`
-    );
+    const label = user ? `<@${user.id}>` : `\`${steamId}\``;
+    await interaction.editReply(`Stopped tracking ${label}.`);
   } else if (sub === "all") {
     const linked = getAllLinkedAccounts();
     if (!linked.length) {
-      await interaction.reply(
-        "No one has linked their account yet. "
-        + "Use `/link` first."
+      await interaction.editReply(
+        "No one has linked their account yet. Use `/link` first.",
       );
       return;
     }
-    await interaction.deferReply();
     let total = 0;
     for (const { steamId } of linked) {
       addTrackedPlayer(guildId, steamId);
@@ -135,18 +92,15 @@ export async function execute(
       total++;
     }
     await interaction.editReply(
-      `Now tracking ${total} linked player(s). `
-      + "Match history loaded."
+      `Now tracking ${total} linked player(s). Match history loaded.`,
     );
   } else {
     const players = getTrackedPlayers(guildId);
     if (!players.length) {
-      await interaction.reply("No players tracked yet.");
+      await interaction.editReply("No players tracked yet.");
       return;
     }
     const list = players.map((id) => `\u2022 \`${id}\``);
-    await interaction.reply(
-      `**Tracked players:**\n${list.join("\n")}`
-    );
+    await interaction.editReply(`**Tracked players:**\n${list.join("\n")}`);
   }
-}
+});

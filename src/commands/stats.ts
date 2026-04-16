@@ -1,100 +1,39 @@
+import { SlashCommandBuilder } from "discord.js";
+import { fmt, freshnessSuffix, leetifyEmbed } from "../helpers.js";
 import {
-  SlashCommandBuilder,
-  ChatInputCommandInteraction,
-} from "discord.js";
-import { getProfile } from "../leetify/client.js";
-import { getSteamId } from "../store.js";
-import {
-  leetifyEmbed,
-  resolveSteamId,
-  fmt,
-} from "../helpers.js";
+  getProfileWithFallback,
+  isFullProfile,
+  requireLinkedUser,
+  wrapCommand,
+} from "./handler.js";
 
 export const data = new SlashCommandBuilder()
   .setName("stats")
-  .setDescription(
-    "Show a player's CS2 stats"
-  )
-  .addUserOption((opt) =>
-    opt
-      .setName("user")
-      .setDescription("Discord user (must be linked)")
-  )
-  .addStringOption((opt) =>
-    opt
-      .setName("steamid")
-      .setDescription("Steam64 ID (if not linked)")
+  .setDescription("Show a player's CS2 stats")
+  .addUserOption((opt) => opt.setName("user").setDescription("Player to look up"));
+
+export const execute = wrapCommand(async (interaction) => {
+  const resolved = await requireLinkedUser(interaction);
+  if (!resolved) return;
+
+  const { data: p, cached, snapshotAt } = await getProfileWithFallback(resolved.steamId);
+
+  const name = isFullProfile(p) ? p.name : p.name;
+  const premier = isFullProfile(p) ? p.ranks?.premier : p.premier;
+  const leetify = isFullProfile(p) ? p.ranks?.leetify : p.leetify;
+  const rating = isFullProfile(p) ? p.rating : p;
+
+  const embed = leetifyEmbed(cached ? `${name} (cached)` : name).addFields(
+    { name: "Leetify Rating", value: fmt(leetify), inline: true },
+    { name: "Aim", value: fmt(rating?.aim), inline: true },
+    { name: "Positioning", value: fmt(rating?.positioning), inline: true },
+    { name: "Utility", value: fmt(rating?.utility), inline: true },
+    { name: "Clutch", value: fmt(rating?.clutch, 2), inline: true },
+    { name: "Premier", value: premier?.toLocaleString() ?? "N/A", inline: true },
   );
 
-export async function execute(
-  interaction: ChatInputCommandInteraction
-) {
-  await interaction.deferReply();
+  if (cached)
+    embed.setDescription(freshnessSuffix(snapshotAt, "cached — last synced").trim());
 
-  let { steamId, userId } = resolveSteamId(interaction);
-
-  if (userId && !steamId) {
-    await interaction.editReply(
-      `<@${userId}> hasn't linked their account. `
-      + "They need to run `/link` first."
-    );
-    return;
-  }
-
-  if (!steamId) {
-    steamId = getSteamId(interaction.user.id);
-    if (!steamId) {
-      await interaction.editReply(
-        "Provide a `user` or `steamid`, "
-        + "or `/link` your own account first."
-      );
-      return;
-    }
-  }
-
-  try {
-    const p = await getProfile(steamId);
-
-    const embed = leetifyEmbed(p.name).addFields(
-      {
-        name: "Leetify Rating",
-        value: fmt(p.ranks?.leetify),
-        inline: true,
-      },
-      {
-        name: "Aim",
-        value: fmt(p.rating?.aim),
-        inline: true,
-      },
-      {
-        name: "Positioning",
-        value: fmt(p.rating?.positioning),
-        inline: true,
-      },
-      {
-        name: "Utility",
-        value: fmt(p.rating?.utility),
-        inline: true,
-      },
-      {
-        name: "Clutch",
-        value: fmt(p.rating?.clutch, 2),
-        inline: true,
-      },
-      {
-        name: "Premier",
-        value: p.ranks?.premier?.toLocaleString()
-          ?? "N/A",
-        inline: true,
-      }
-    );
-
-    await interaction.editReply({ embeds: [embed] });
-  } catch {
-    await interaction.editReply(
-      `Failed to fetch stats for \`${steamId}\`. `
-      + "Is the Steam ID correct and the profile "
-      + "Is the Steam ID correct and the profile on Leetify?"
-    );
-  }
-}
+  await interaction.editReply({ embeds: [embed] });
+});

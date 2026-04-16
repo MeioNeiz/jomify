@@ -1,27 +1,21 @@
-import {
-  describe,
-  test,
-  expect,
-  beforeEach,
-} from "bun:test";
-import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
 
 // Use in-memory DB for tests
 import db from "../src/db.js";
 
 import {
   addTrackedPlayer,
-  removeTrackedPlayer,
-  getTrackedPlayers,
-  linkAccount,
-  getSteamId,
   getDiscordId,
-  isMatchProcessed,
-  markMatchProcessed,
-  setNotifyChannel,
-  getNotifyChannel,
-  saveLeaderboardSnapshot,
   getLastLeaderboard,
+  getNotifyChannel,
+  getSteamId,
+  getTrackedPlayers,
+  isMatchProcessed,
+  linkAccount,
+  markMatchProcessed,
+  removeTrackedPlayer,
+  saveLeaderboardSnapshot,
+  setNotifyChannel,
 } from "../src/store.js";
 
 const GUILD = "test-guild";
@@ -101,9 +95,7 @@ describe("processed matches", () => {
 
   test("same match different player is separate", () => {
     markMatchProcessed("match-1", STEAM, "2026-01-01");
-    expect(
-      isMatchProcessed("match-1", "other-steam")
-    ).toBe(false);
+    expect(isMatchProcessed("match-1", "other-steam")).toBe(false);
   });
 });
 
@@ -137,8 +129,6 @@ describe("leaderboard snapshots", () => {
     saveLeaderboardSnapshot(GUILD, entries);
     const result = getLastLeaderboard(GUILD);
     expect(result).toHaveLength(2);
-    expect(
-      result.find((r) => r.steamId === STEAM)?.premier
-    ).toBe(15000);
+    expect(result.find((r) => r.steamId === STEAM)?.premier).toBe(15000);
   });
 });
