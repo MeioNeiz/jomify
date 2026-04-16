@@ -1,45 +1,35 @@
 import { type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getProfile } from "./leetify/client.js";
 import type { LeetifyProfile } from "./leetify/types.js";
-import { getSteamId, getTrackedPlayers } from "./store.js";
+import { getTrackedPlayers } from "./store.js";
 
 export const BRAND_COLOUR = 0xf84982;
 
 export function leetifyEmbed(title: string) {
-  return new EmbedBuilder().setTitle(title).setColor(BRAND_COLOUR).setTimestamp();
+  return new EmbedBuilder().setTitle(title).setColor(BRAND_COLOUR);
 }
 
-export function resolveSteamId(
+/** Guild id for a slash command, or null (after replying) for a DM. */
+export async function requireGuild(
   interaction: ChatInputCommandInteraction,
-  userOpt = "user",
-  steamOpt = "steamid",
-): { steamId: string | null; userId: string | null } {
-  const user = interaction.options.getUser(userOpt);
-  if (user) {
-    return {
-      steamId: getSteamId(user.id),
-      userId: user.id,
-    };
-  }
-  const raw = interaction.options.getString(steamOpt);
-  return { steamId: raw, userId: null };
+): Promise<string | null> {
+  if (interaction.guildId) return interaction.guildId;
+  await interaction.editReply("Use this in a server.");
+  return null;
 }
 
-/** Resolve user option or fall back to caller. Returns steamId or sends error. */
-export function resolveUser(
+/** Guild id + at least one tracked player, or null (after replying). */
+export async function requireTrackedGuild(
   interaction: ChatInputCommandInteraction,
-  userOpt = "user",
-): { steamId: string | null; label: string } {
-  const user = interaction.options.getUser(userOpt);
-  const discordId = user?.id ?? interaction.user.id;
-  const label = user?.displayName ?? interaction.user.displayName;
-  return { steamId: getSteamId(discordId), label };
-}
-
-export function requireGuild(interaction: ChatInputCommandInteraction): string | null {
-  const guildId = interaction.guildId;
+): Promise<{ guildId: string; steamIds: string[] } | null> {
+  const guildId = await requireGuild(interaction);
   if (!guildId) return null;
-  return guildId;
+  const steamIds = getTrackedPlayers(guildId);
+  if (!steamIds.length) {
+    await interaction.editReply("No tracked players. Use `/track` to add some.");
+    return null;
+  }
+  return { guildId, steamIds };
 }
 
 export async function fetchGuildProfiles(
@@ -56,6 +46,24 @@ export async function fetchGuildProfiles(
 
 export function fmt(val: number | undefined | null, decimals = 1): string {
   return val != null ? val.toFixed(decimals) : "N/A";
+}
+
+/** "+212" / "-43" / "0". */
+export function signed(n: number): string {
+  const r = Math.round(n);
+  return r > 0 ? `+${r}` : `${r}`;
+}
+
+/** KD ratio with 2 dp, handling zero-death edge case. */
+export function kdRatio(kills: number, deaths: number): string {
+  return deaths ? (kills / deaths).toFixed(2) : `${kills}`;
+}
+
+/** Per-team score badge: "W 13-7" / "L 7-13" / "T 12-12". */
+export function outcomeTag(won: number, lost: number): string {
+  if (won > lost) return `W ${won}-${lost}`;
+  if (lost > won) return `L ${won}-${lost}`;
+  return `T ${won}-${lost}`;
 }
 
 /** SQLite UTC datetime string → Discord relative timestamp. */

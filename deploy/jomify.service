@@ -1,0 +1,14 @@
+[Unit]
+Description=Jomify Discord bot
+After=network.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/home/opc/jomify
+ExecStart=/home/opc/.bun/bin/bun run src/index.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

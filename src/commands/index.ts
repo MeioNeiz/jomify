@@ -4,10 +4,13 @@ import type {
   SlashCommandOptionsOnlyBuilder,
   SlashCommandSubcommandsOnlyBuilder,
 } from "discord.js";
+import * as carry from "./carry.js";
 import * as compare from "./compare.js";
 import * as flash from "./flash.js";
+import * as floatCmd from "./float.js";
 import * as importCmd from "./import.js";
 import * as inv from "./inv.js";
+import * as kobe from "./kobe.js";
 import * as leaderboard from "./leaderboard.js";
 import * as link from "./link.js";
 import * as maps from "./maps.js";
@@ -15,6 +18,7 @@ import * as setchannel from "./setchannel.js";
 import * as shame from "./shame.js";
 import * as stats from "./stats.js";
 import * as sus from "./sus.js";
+import * as team from "./team.js";
 import * as track from "./track.js";
 
 export type Command = {
@@ -38,4 +42,8 @@ export const commands: [string, Command][] = [
   ["sus", sus],
   ["inv", inv],
   ["maps", maps],
+  ["float", floatCmd],
+  ["kobe", kobe],
+  ["team", team],
+  ["carry", carry],
 ];

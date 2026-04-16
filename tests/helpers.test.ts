@@ -24,14 +24,21 @@ describe("fmt", () => {
 });
 
 describe("requireGuild", () => {
-  test("returns guildId when present", () => {
-    const interaction = { guildId: "123" } as any;
-    expect(requireGuild(interaction)).toBe("123");
+  test("returns guildId when present", async () => {
+    const interaction = { guildId: "123", editReply: async () => {} } as any;
+    expect(await requireGuild(interaction)).toBe("123");
   });
 
-  test("returns null when no guildId", () => {
-    const interaction = { guildId: null } as any;
-    expect(requireGuild(interaction)).toBeNull();
+  test("returns null and replies when no guildId", async () => {
+    let replied: unknown = null;
+    const interaction = {
+      guildId: null,
+      editReply: async (m: unknown) => {
+        replied = m;
+      },
+    } as any;
+    expect(await requireGuild(interaction)).toBeNull();
+    expect(replied).toBe("Use this in a server.");
   });
 });
 

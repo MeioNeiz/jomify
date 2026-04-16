@@ -1,6 +1,6 @@
+import { eq, sql } from "drizzle-orm";
 import db from "../db.js";
-
-// ── Player streaks ──
+import { playerStreaks } from "../schema.js";
 
 export interface PlayerStreak {
   steamId: string;
@@ -9,25 +9,20 @@ export interface PlayerStreak {
   lastAlertedCount: number;
 }
 
+const nowExpr = sql`datetime('now')`;
+
 export function getPlayerStreak(steamId: string): PlayerStreak | null {
   const row = db
-    .query(
-      `SELECT steam_id, streak_type, streak_count,
-              last_alerted_count
-       FROM player_streaks WHERE steam_id = ?`,
-    )
-    .get(steamId) as {
-    steam_id: string;
-    streak_type: string;
-    streak_count: number;
-    last_alerted_count: number;
-  } | null;
+    .select()
+    .from(playerStreaks)
+    .where(eq(playerStreaks.steamId, steamId))
+    .get();
   if (!row) return null;
   return {
-    steamId: row.steam_id,
-    streakType: row.streak_type as "win" | "loss",
-    streakCount: row.streak_count,
-    lastAlertedCount: row.last_alerted_count,
+    steamId: row.steamId,
+    streakType: row.streakType as "win" | "loss",
+    streakCount: row.streakCount,
+    lastAlertedCount: row.lastAlertedCount,
   };
 }
 
@@ -38,48 +33,50 @@ export function updatePlayerStreak(
   const current = getPlayerStreak(steamId);
 
   if (outcome === "tie") {
-    db.run(
-      `INSERT INTO player_streaks
-         (steam_id, streak_type, streak_count,
-          last_alerted_count, updated_at)
-       VALUES (?, 'win', 0, 0, datetime('now'))
-       ON CONFLICT(steam_id) DO UPDATE SET
-         streak_type = 'win', streak_count = 0,
-         last_alerted_count = 0,
-         updated_at = datetime('now')`,
-      [steamId],
-    );
-    return {
+    db.insert(playerStreaks)
+      .values({
+        steamId,
+        streakType: "win",
+        streakCount: 0,
+        lastAlertedCount: 0,
+        updatedAt: nowExpr as unknown as string,
+      })
+      .onConflictDoUpdate({
+        target: playerStreaks.steamId,
+        set: {
+          streakType: "win",
+          streakCount: 0,
+          lastAlertedCount: 0,
+          updatedAt: nowExpr as unknown as string,
+        },
+      })
+      .run();
+    return { steamId, streakType: "win", streakCount: 0, lastAlertedCount: 0 };
+  }
+
+  const [newCount, lastAlerted] =
+    current && current.streakType === outcome
+      ? [current.streakCount + 1, current.lastAlertedCount]
+      : [1, 0];
+
+  db.insert(playerStreaks)
+    .values({
       steamId,
-      streakType: "win",
-      streakCount: 0,
-      lastAlertedCount: 0,
-    };
-  }
-
-  let newCount: number;
-  let lastAlerted: number;
-
-  if (current && current.streakType === outcome) {
-    newCount = current.streakCount + 1;
-    lastAlerted = current.lastAlertedCount;
-  } else {
-    newCount = 1;
-    lastAlerted = 0;
-  }
-
-  db.run(
-    `INSERT INTO player_streaks
-       (steam_id, streak_type, streak_count,
-        last_alerted_count, updated_at)
-     VALUES (?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(steam_id) DO UPDATE SET
-       streak_type = ?,
-       streak_count = ?,
-       last_alerted_count = ?,
-       updated_at = datetime('now')`,
-    [steamId, outcome, newCount, lastAlerted, outcome, newCount, lastAlerted],
-  );
+      streakType: outcome,
+      streakCount: newCount,
+      lastAlertedCount: lastAlerted,
+      updatedAt: nowExpr as unknown as string,
+    })
+    .onConflictDoUpdate({
+      target: playerStreaks.steamId,
+      set: {
+        streakType: outcome,
+        streakCount: newCount,
+        lastAlertedCount: lastAlerted,
+        updatedAt: nowExpr as unknown as string,
+      },
+    })
+    .run();
 
   return {
     steamId,
@@ -90,10 +87,8 @@ export function updatePlayerStreak(
 }
 
 export function markStreakAlerted(steamId: string, count: number): void {
-  db.run(
-    `UPDATE player_streaks
-     SET last_alerted_count = ?
-     WHERE steam_id = ?`,
-    [count, steamId],
-  );
+  db.update(playerStreaks)
+    .set({ lastAlertedCount: count })
+    .where(eq(playerStreaks.steamId, steamId))
+    .run();
 }

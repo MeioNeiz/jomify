@@ -1,39 +1,72 @@
 import { SlashCommandBuilder } from "discord.js";
 import { fmt, freshnessSuffix, leetifyEmbed } from "../helpers.js";
-import {
-  getProfileWithFallback,
-  isFullProfile,
-  requireLinkedUser,
-  wrapCommand,
-} from "./handler.js";
+import { getProfile } from "../leetify/client.js";
+import { getLatestSnapshot } from "../store.js";
+import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
   .setName("stats")
   .setDescription("Show a player's CS2 stats")
   .addUserOption((opt) => opt.setName("user").setDescription("Player to look up"));
 
+type View = {
+  name: string;
+  premier: number | null;
+  leetify: number | null;
+  aim: number;
+  positioning: number;
+  utility: number;
+  clutch: number;
+};
+
 export const execute = wrapCommand(async (interaction) => {
   const resolved = await requireLinkedUser(interaction);
   if (!resolved) return;
 
-  const { data: p, cached, snapshotAt } = await getProfileWithFallback(resolved.steamId);
-
-  const name = isFullProfile(p) ? p.name : p.name;
-  const premier = isFullProfile(p) ? p.ranks?.premier : p.premier;
-  const leetify = isFullProfile(p) ? p.ranks?.leetify : p.leetify;
-  const rating = isFullProfile(p) ? p.rating : p;
-
-  const embed = leetifyEmbed(cached ? `${name} (cached)` : name).addFields(
-    { name: "Leetify Rating", value: fmt(leetify), inline: true },
-    { name: "Aim", value: fmt(rating?.aim), inline: true },
-    { name: "Positioning", value: fmt(rating?.positioning), inline: true },
-    { name: "Utility", value: fmt(rating?.utility), inline: true },
-    { name: "Clutch", value: fmt(rating?.clutch, 2), inline: true },
-    { name: "Premier", value: premier?.toLocaleString() ?? "N/A", inline: true },
-  );
-
-  if (cached)
-    embed.setDescription(freshnessSuffix(snapshotAt, "cached — last synced").trim());
-
-  await interaction.editReply({ embeds: [embed] });
+  await respondWithRevalidate<View>(interaction, {
+    fetchCached: () => {
+      const s = getLatestSnapshot(resolved.steamId);
+      if (!s) return null;
+      return {
+        data: {
+          name: s.name,
+          premier: s.premier,
+          leetify: s.leetify,
+          aim: s.aim,
+          positioning: s.positioning,
+          utility: s.utility,
+          clutch: s.clutch,
+        },
+        snapshotAt: s.recordedAt,
+      };
+    },
+    fetchFresh: async () => {
+      const p = await getProfile(resolved.steamId);
+      return {
+        name: p.name,
+        premier: p.ranks?.premier ?? null,
+        leetify: p.ranks?.leetify ?? null,
+        aim: p.rating?.aim ?? 0,
+        positioning: p.rating?.positioning ?? 0,
+        utility: p.rating?.utility ?? 0,
+        clutch: p.rating?.clutch ?? 0,
+      };
+    },
+    render: (v, { cached, snapshotAt }) => {
+      const embed = leetifyEmbed(v.name).addFields(
+        { name: "Leetify Rating", value: fmt(v.leetify), inline: true },
+        { name: "Aim", value: fmt(v.aim), inline: true },
+        { name: "Positioning", value: fmt(v.positioning), inline: true },
+        { name: "Utility", value: fmt(v.utility), inline: true },
+        { name: "Clutch", value: fmt(v.clutch, 2), inline: true },
+        { name: "Premier", value: v.premier?.toLocaleString() ?? "N/A", inline: true },
+      );
+      if (cached) {
+        embed.setDescription(
+          freshnessSuffix(snapshotAt, "cached \u2014 last synced").trim(),
+        );
+      }
+      return { embeds: [embed] };
+    },
+  });
 });

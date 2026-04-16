@@ -92,8 +92,7 @@ export async function checkStreakAlerts(
       const embed = new EmbedBuilder()
         .setTitle("Win Streak!")
         .setColor(0x00ff00)
-        .setDescription(hype)
-        .setTimestamp();
+        .setDescription(hype);
       await sendToGuilds(client, steamId, embed);
       markStreakAlerted(steamId, streakCount);
     }
@@ -108,8 +107,7 @@ export async function checkStreakAlerts(
       const embed = new EmbedBuilder()
         .setTitle("Rough Patch")
         .setColor(0xff6600)
-        .setDescription(desc)
-        .setTimestamp();
+        .setDescription(desc);
       await sendToGuilds(client, steamId, embed);
       markStreakAlerted(steamId, streakCount);
     }
@@ -164,8 +162,7 @@ export async function scanOpponents(
         lines.join("\n"),
     )
     .setFooter({
-      text: "Single-match scan " + "\u2022 not definitive",
-    })
-    .setTimestamp();
+      text: "Single-match scan \u2022 not definitive",
+    });
   await sendToGuilds(client, trackedSteamId, embed);
 }

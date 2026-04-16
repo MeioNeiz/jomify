@@ -1,9 +1,12 @@
-import type { ChatInputCommandInteraction } from "discord.js";
+import type {
+  ChatInputCommandInteraction,
+  InteractionEditReplyOptions,
+} from "discord.js";
 import { fetchGuildProfiles } from "../helpers.js";
-import { getProfile, LeetifyUnavailableError } from "../leetify/client.js";
+import { LeetifyUnavailableError } from "../leetify/client.js";
 import type { LeetifyProfile } from "../leetify/types.js";
 import log from "../logger.js";
-import { getLatestSnapshot, getSteamId, type PlayerSnapshot } from "../store.js";
+import { getSteamId } from "../store.js";
 
 type CommandFn = (interaction: ChatInputCommandInteraction) => Promise<void>;
 
@@ -60,35 +63,6 @@ export async function requireLinkedUser(
   return { steamId, label };
 }
 
-/**
- * Fetch a profile from Leetify, falling back to the latest
- * local snapshot if the API is unavailable. Returns
- * { profile, cached } where profile is a full LeetifyProfile
- * or a snapshot shaped enough for most commands.
- */
-export async function getProfileWithFallback(steamId: string): Promise<{
-  data: LeetifyProfile | PlayerSnapshot;
-  cached: boolean;
-  snapshotAt: string | null;
-}> {
-  try {
-    const data = await getProfile(steamId);
-    return { data, cached: false, snapshotAt: null };
-  } catch {
-    const snap = getLatestSnapshot(steamId);
-    if (snap) {
-      const { recordedAt, ...rest } = snap;
-      return { data: rest, cached: true, snapshotAt: recordedAt };
-    }
-    throw new Error(`No data for ${steamId} (API down, no local cache)`);
-  }
-}
-
-/** Check if a profile result is a full LeetifyProfile or a snapshot. */
-export function isFullProfile(p: LeetifyProfile | PlayerSnapshot): p is LeetifyProfile {
-  return "steam64_id" in p;
-}
-
 /** Require a guild + tracked profiles, or reply with error. */
 export async function requireGuildProfiles(
   interaction: ChatInputCommandInteraction,
@@ -104,4 +78,58 @@ export async function requireGuildProfiles(
     return null;
   }
   return { guildId, profiles };
+}
+
+/**
+ * Stale-while-revalidate: reply immediately from local data, then fetch
+ * fresh in parallel and update the message if it differs.
+ *
+ * - If `fetchCached` returns data, render it and editReply straight away.
+ * - Meanwhile, await `fetchFresh`. On success and when the rendered payload
+ *   differs from the cached one, edit the message with the fresh version.
+ * - On fresh failure with a cached reply already shown: leave it, log a warn.
+ * - On fresh failure with no cache: surface `missingMessage` (or rethrow).
+ */
+export async function respondWithRevalidate<T>(
+  interaction: ChatInputCommandInteraction,
+  opts: {
+    fetchCached: () => { data: T; snapshotAt: string | null } | null;
+    fetchFresh: () => Promise<T>;
+    render: (
+      data: T,
+      meta: { cached: boolean; snapshotAt: string | null },
+    ) => InteractionEditReplyOptions;
+    missingMessage?: string;
+  },
+): Promise<void> {
+  const cached = opts.fetchCached();
+  let shownKey: string | null = null;
+
+  if (cached) {
+    const payload = opts.render(cached.data, {
+      cached: true,
+      snapshotAt: cached.snapshotAt,
+    });
+    await interaction.editReply(payload);
+    shownKey = JSON.stringify(payload);
+  }
+
+  try {
+    const fresh = await opts.fetchFresh();
+    const payload = opts.render(fresh, { cached: false, snapshotAt: null });
+    const key = JSON.stringify(payload);
+    if (key !== shownKey) {
+      await interaction.editReply(payload);
+    }
+  } catch (err) {
+    if (cached) {
+      log.warn(
+        { err, cmd: interaction.commandName },
+        "Revalidate failed \u2014 keeping cached reply",
+      );
+      return;
+    }
+    const msg = opts.missingMessage ?? "Leetify is down and no cached data is available.";
+    await interaction.editReply(msg);
+  }
 }

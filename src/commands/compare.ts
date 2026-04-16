@@ -1,23 +1,25 @@
 import { type EmbedBuilder, SlashCommandBuilder } from "discord.js";
 import { fmt, freshnessSuffix, leetifyEmbed } from "../helpers.js";
+import { getProfile } from "../leetify/client.js";
 import type { LeetifyProfile } from "../leetify/types.js";
 import {
   getHeadToHead,
+  getLatestSnapshot,
   getPlayerMatchStats,
   getPlayerStatAverages,
   getSteamId,
-  type PlayerSnapshot,
+  type PlayerAverages,
 } from "../store.js";
-import { getProfileWithFallback, isFullProfile } from "./handler.js";
+import { respondWithRevalidate } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
   .setName("compare")
   .setDescription("Compare two players side by side")
   .addUserOption((opt) =>
-    opt.setName("user1").setDescription("First player").setRequired(true),
+    opt.setName("user2").setDescription("Other player").setRequired(true),
   )
   .addUserOption((opt) =>
-    opt.setName("user2").setDescription("Second player").setRequired(true),
+    opt.setName("user1").setDescription("First player (defaults to you)"),
   )
   .addStringOption((opt) =>
     opt
@@ -71,51 +73,73 @@ function ratingsDetail(p1: LeetifyProfile, p2: LeetifyProfile): EmbedBuilder {
   );
 }
 
+type Row = {
+  label: string;
+  key: keyof PlayerAverages;
+  dec: number;
+  higherIsBetter: boolean;
+};
+
+function averagesEmbed(
+  title: string,
+  rows: Row[],
+  a1: PlayerAverages,
+  a2: PlayerAverages,
+): EmbedBuilder {
+  const lines = rows.map(({ label, key, dec, higherIsBetter }) => {
+    const [s1, s2] = bold(a1[key], a2[key], dec, higherIsBetter);
+    return `${label}: ${s1} vs ${s2}`;
+  });
+  return leetifyEmbed(title).setDescription(lines.join("\n"));
+}
+
 function combatDetail(
   p1Name: string,
   p2Name: string,
-  a1: Record<string, number>,
-  a2: Record<string, number>,
+  a1: PlayerAverages,
+  a2: PlayerAverages,
 ): EmbedBuilder {
-  const rows: [string, string, number, boolean][] = [
-    ["Kills", "avg_kills", 1, true],
-    ["Deaths", "avg_deaths", 1, false],
-    ["KD", "avg_kd", 2, true],
-    ["HS %", "avg_hs", 1, true],
-    ["Spray", "avg_spray", 1, true],
-    ["DPR", "avg_dpr", 1, true],
-  ];
-
-  const lines = rows.map(([label, key, dec, hib]) => {
-    const [s1, s2] = bold(a1[key], a2[key], dec, hib);
-    return `${label}: ${s1} vs ${s2}`;
-  });
-
-  return leetifyEmbed(`${p1Name} vs ${p2Name} \u2014 Combat`).setDescription(
-    lines.join("\n"),
+  return averagesEmbed(
+    `${p1Name} vs ${p2Name} \u2014 Combat (last 30)`,
+    [
+      { label: "Kills", key: "avg_kills", dec: 1, higherIsBetter: true },
+      { label: "Deaths", key: "avg_deaths", dec: 1, higherIsBetter: false },
+      { label: "KD", key: "avg_kd", dec: 2, higherIsBetter: true },
+      { label: "HS %", key: "avg_hs", dec: 1, higherIsBetter: true },
+      { label: "Spray", key: "avg_spray", dec: 1, higherIsBetter: true },
+      { label: "DPR", key: "avg_dpr", dec: 1, higherIsBetter: true },
+    ],
+    a1,
+    a2,
   );
 }
 
 function utilityDetail(
   p1Name: string,
   p2Name: string,
-  a1: Record<string, number>,
-  a2: Record<string, number>,
+  a1: PlayerAverages,
+  a2: PlayerAverages,
 ): EmbedBuilder {
-  const rows: [string, string, number, boolean][] = [
-    ["Flash Enemies", "avg_flash_enemies", 1, true],
-    ["HE Damage", "avg_he_damage", 1, true],
-    ["Util on Death", "avg_util_on_death", 0, false],
-    ["Team Flash %", "avg_team_flash_rate", 2, false],
-  ];
-
-  const lines = rows.map(([label, key, dec, hib]) => {
-    const [s1, s2] = bold(a1[key], a2[key], dec, hib);
-    return `${label}: ${s1} vs ${s2}`;
-  });
-
-  return leetifyEmbed(`${p1Name} vs ${p2Name} \u2014 Utility`).setDescription(
-    lines.join("\n"),
+  return averagesEmbed(
+    `${p1Name} vs ${p2Name} \u2014 Utility (last 30)`,
+    [
+      {
+        label: "Enemy flash %",
+        key: "flash_enemy_rate",
+        dec: 2,
+        higherIsBetter: true,
+      },
+      {
+        label: "Team flash %",
+        key: "flash_friend_rate",
+        dec: 2,
+        higherIsBetter: false,
+      },
+      { label: "HE Damage", key: "avg_he_damage", dec: 1, higherIsBetter: true },
+      { label: "Util on Death", key: "avg_util_on_death", dec: 0, higherIsBetter: false },
+    ],
+    a1,
+    a2,
   );
 }
 
@@ -192,32 +216,27 @@ function formDetail(
 
 // ── Helpers for profile/snapshot ──
 
-function getName(p: LeetifyProfile | PlayerSnapshot): string {
-  return isFullProfile(p) ? p.name : p.name;
-}
-
-function getRanks(p: LeetifyProfile | PlayerSnapshot) {
-  if (isFullProfile(p)) return { premier: p.ranks?.premier, leetify: p.ranks?.leetify };
-  return { premier: p.premier, leetify: p.leetify };
-}
-
-function getRating(p: LeetifyProfile | PlayerSnapshot) {
-  if (isFullProfile(p)) return p.rating;
-  return {
-    aim: p.aim,
-    positioning: p.positioning,
-    utility: p.utility,
-    clutch: p.clutch,
-    opening: 0,
-  };
-}
-
 // ── Execute ──
 
 import { wrapCommand } from "./handler.js";
 
+type OverviewView = {
+  n1: string;
+  n2: string;
+  premier1: number | null;
+  premier2: number | null;
+  leetify1: number | null;
+  leetify2: number | null;
+  aim1: number;
+  aim2: number;
+  positioning1: number;
+  positioning2: number;
+  utility1: number;
+  utility2: number;
+};
+
 export const execute = wrapCommand(async (interaction) => {
-  const u1 = interaction.options.getUser("user1", true);
+  const u1 = interaction.options.getUser("user1") ?? interaction.user;
   const u2 = interaction.options.getUser("user2", true);
   const id1 = getSteamId(u1.id);
   const id2 = getSteamId(u2.id);
@@ -230,82 +249,102 @@ export const execute = wrapCommand(async (interaction) => {
 
   const focus = interaction.options.getString("focus");
 
-  const [r1, r2] = await Promise.all([
-    getProfileWithFallback(id1),
-    getProfileWithFallback(id2),
-  ]);
-
-  const cached = r1.cached || r2.cached;
-  const oldestSnapshot =
-    [r1.snapshotAt, r2.snapshotAt].filter((s): s is string => !!s).sort()[0] ?? null;
-  const p1 = r1.data;
-  const p2 = r2.data;
-
-  // For focus modes that only need local DB, skip profile entirely
+  // Focus modes backed purely by local match data — no API needed.
   if (focus === "combat" || focus === "utility") {
-    const a1 = getPlayerStatAverages(id1);
-    const a2 = getPlayerStatAverages(id2);
+    const [a1, a2] = [getPlayerStatAverages(id1), getPlayerStatAverages(id2)];
+    const [s1, s2] = [getLatestSnapshot(id1), getLatestSnapshot(id2)];
     if (!a1 || !a2) {
       await interaction.editReply("Need match data for both players.");
       return;
     }
-    const n1 = getName(p1),
-      n2 = getName(p2);
+    const n1 = s1?.name ?? u1.displayName;
+    const n2 = s2?.name ?? u2.displayName;
     const embed =
       focus === "combat" ? combatDetail(n1, n2, a1, a2) : utilityDetail(n1, n2, a1, a2);
     await interaction.editReply({ embeds: [embed] });
     return;
   }
 
-  if (focus === "h2h") {
-    await interaction.editReply({
-      embeds: [h2hDetail(getName(p1), getName(p2), id1, id2)],
-    });
+  if (focus === "h2h" || focus === "form") {
+    const [s1, s2] = [getLatestSnapshot(id1), getLatestSnapshot(id2)];
+    const n1 = s1?.name ?? u1.displayName;
+    const n2 = s2?.name ?? u2.displayName;
+    const embed =
+      focus === "h2h" ? h2hDetail(n1, n2, id1, id2) : formDetail(n1, n2, id1, id2);
+    await interaction.editReply({ embeds: [embed] });
     return;
   }
 
-  if (focus === "form") {
-    await interaction.editReply({
-      embeds: [formDetail(getName(p1), getName(p2), id1, id2)],
-    });
-    return;
-  }
-
-  // Default overview or ratings — need profile/snapshot data
-  if (focus === "ratings" && isFullProfile(p1) && isFullProfile(p2)) {
+  // `ratings` focus needs the full LeetifyProfile (includes `opening`),
+  // so it blocks on a fresh API call. No cached variant possible.
+  if (focus === "ratings") {
+    const [p1, p2] = await Promise.all([getProfile(id1), getProfile(id2)]);
     await interaction.editReply({ embeds: [ratingsDetail(p1, p2)] });
     return;
   }
 
-  // Overview — works with either type
-  const ranks1 = getRanks(p1),
-    ranks2 = getRanks(p2);
-  const rat1 = getRating(p1),
-    rat2 = getRating(p2);
-  const n1 = getName(p1),
-    n2 = getName(p2);
-
-  const [pr1, pr2] = bold(ranks1.premier, ranks2.premier, 0);
-  const [lr1, lr2] = bold(ranks1.leetify, ranks2.leetify);
-  const [a1, a2] = bold(rat1?.aim, rat2?.aim);
-  const [u1v, u2v] = bold(rat1?.utility, rat2?.utility);
-  const [pos1, pos2] = bold(rat1?.positioning, rat2?.positioning);
-
-  const lines = [
-    `Premier: ${pr1} vs ${pr2}`,
-    `Leetify: ${lr1} vs ${lr2}`,
-    `Aim: ${a1} vs ${a2}`,
-    `Positioning: ${pos1} vs ${pos2}`,
-    `Utility: ${u1v} vs ${u2v}`,
-  ];
-
-  const title = cached ? `${n1} vs ${n2} (cached)` : `${n1} vs ${n2}`;
-  const desc = cached
-    ? lines.join("\n") + freshnessSuffix(oldestSnapshot, "cached \u2014 last synced")
-    : lines.join("\n");
-  const embed = leetifyEmbed(title).setDescription(desc).setFooter({
-    text: "Use focus option for detail: ratings, combat, utility, h2h, form",
+  // Default overview — stale-while-revalidate.
+  await respondWithRevalidate<OverviewView>(interaction, {
+    fetchCached: () => {
+      const [s1, s2] = [getLatestSnapshot(id1), getLatestSnapshot(id2)];
+      if (!s1 || !s2) return null;
+      const oldest = [s1.recordedAt, s2.recordedAt].sort()[0] ?? null;
+      return {
+        data: {
+          n1: s1.name,
+          n2: s2.name,
+          premier1: s1.premier,
+          premier2: s2.premier,
+          leetify1: s1.leetify,
+          leetify2: s2.leetify,
+          aim1: s1.aim,
+          aim2: s2.aim,
+          positioning1: s1.positioning,
+          positioning2: s2.positioning,
+          utility1: s1.utility,
+          utility2: s2.utility,
+        },
+        snapshotAt: oldest,
+      };
+    },
+    fetchFresh: async () => {
+      const [p1, p2] = await Promise.all([getProfile(id1), getProfile(id2)]);
+      return {
+        n1: p1.name,
+        n2: p2.name,
+        premier1: p1.ranks?.premier ?? null,
+        premier2: p2.ranks?.premier ?? null,
+        leetify1: p1.ranks?.leetify ?? null,
+        leetify2: p2.ranks?.leetify ?? null,
+        aim1: p1.rating?.aim ?? 0,
+        aim2: p2.rating?.aim ?? 0,
+        positioning1: p1.rating?.positioning ?? 0,
+        positioning2: p2.rating?.positioning ?? 0,
+        utility1: p1.rating?.utility ?? 0,
+        utility2: p2.rating?.utility ?? 0,
+      };
+    },
+    render: (v, { cached, snapshotAt }) => {
+      const [pr1, pr2] = bold(v.premier1, v.premier2, 0);
+      const [lr1, lr2] = bold(v.leetify1, v.leetify2);
+      const [a1, a2] = bold(v.aim1, v.aim2);
+      const [u1v, u2v] = bold(v.utility1, v.utility2);
+      const [pos1, pos2] = bold(v.positioning1, v.positioning2);
+      const lines = [
+        `Premier: ${pr1} vs ${pr2}`,
+        `Leetify: ${lr1} vs ${lr2}`,
+        `Aim: ${a1} vs ${a2}`,
+        `Positioning: ${pos1} vs ${pos2}`,
+        `Utility: ${u1v} vs ${u2v}`,
+      ];
+      const title = cached ? `${v.n1} vs ${v.n2} (cached)` : `${v.n1} vs ${v.n2}`;
+      const desc = cached
+        ? lines.join("\n") + freshnessSuffix(snapshotAt, "cached \u2014 last synced")
+        : lines.join("\n");
+      const embed = leetifyEmbed(title).setDescription(desc).setFooter({
+        text: "Use focus option for detail: ratings, combat, utility, h2h, form",
+      });
+      return { embeds: [embed] };
+    },
   });
-
-  await interaction.editReply({ embeds: [embed] });
 });

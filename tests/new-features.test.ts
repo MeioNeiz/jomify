@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import db from "../src/db.js";
+import { sqlite as db } from "../src/db.js";
 import type { LeetifyMatchDetails } from "../src/leetify/types.js";
 import {
   getAllGuildIds,
@@ -361,15 +361,14 @@ describe("player stat averages", () => {
     expect(avgs!.avg_kd).toBeGreaterThan(0);
     expect(avgs!.match_count).toBe(4);
     // Extended fields from compare
-    expect(avgs!.avg_flash_enemies).toBeDefined();
+    expect(avgs!.flash_enemy_rate).toBeDefined();
+    expect(avgs!.flash_friend_rate).toBeDefined();
     expect(avgs!.avg_he_damage).toBeDefined();
     expect(avgs!.avg_util_on_death).toBeDefined();
   });
 
-  test("no matches returns zeroes", () => {
-    const avgs = getPlayerStatAverages("nobody");
-    expect(avgs).not.toBeNull();
-    expect(avgs!.match_count).toBe(0);
+  test("no matches returns null", () => {
+    expect(getPlayerStatAverages("nobody")).toBeNull();
   });
 });
 
@@ -528,5 +527,168 @@ describe("analyse z-scores", () => {
     s.reaction_time = 0.1;
     const { score } = analyseStats([s]);
     expect(score).toBeGreaterThan(4);
+  });
+});
+
+// ── Carry ──
+
+import { getCarryStats, getTeamCarryStats } from "../src/store.js";
+
+function makeCarryMatch(
+  id: string,
+  finishedAt: string,
+  t1Score: number,
+  t2Score: number,
+  players: { steamId: string; team: number; lr: number }[],
+): LeetifyMatchDetails {
+  const base = makeMatch(
+    id,
+    "de_dust2",
+    t1Score,
+    t2Score,
+    players.map((p) => ({ steamId: p.steamId, team: p.team, kills: 10, deaths: 10 })),
+  );
+  base.finished_at = finishedAt;
+  for (let i = 0; i < base.stats.length; i++) {
+    const s = base.stats[i]!;
+    const lr = players[i]!.lr;
+    s.leetify_rating = lr;
+    s.ct_leetify_rating = lr;
+    s.t_leetify_rating = lr;
+    s.rounds_won = players[i]!.team === 2 ? t1Score : t2Score;
+    s.rounds_lost = players[i]!.team === 2 ? t2Score : t1Score;
+  }
+  return base;
+}
+
+describe("carry attribution", () => {
+  const JOM = "76561198000000010";
+  const DONG = "76561198000000011";
+  const CHAR = "76561198000000012";
+  const E1 = "76561198000000013";
+  const E2 = "76561198000000014";
+
+  test("overperformer on a winning team carries", () => {
+    // JOM+DONG team wins, DONG played great, CHAR was average.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: 0.1 }, // overperformer
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const rows = getCarryStats(JOM);
+    const dong = rows.find((r) => r.teammateSteamId === DONG);
+    const char = rows.find((r) => r.teammateSteamId === CHAR);
+    expect(dong!.proxyScore).toBeGreaterThan(0);
+    expect(char!.proxyScore).toBeLessThan(0); // slightly below team mean
+  });
+
+  test("underperformer on a losing team gets negative carry", () => {
+    // Team loses; DONG played badly, JOM carried the losing side.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-02T00:00:00Z", 7, 13, [
+        { steamId: JOM, team: 2, lr: 0.1 }, // tried hard
+        { steamId: DONG, team: 2, lr: -0.1 }, // dragged
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const rows = getCarryStats(JOM);
+    const dong = rows.find((r) => r.teammateSteamId === DONG);
+    // Underperformer in a loss → negative, not positive (the trap we avoid).
+    expect(dong!.proxyScore).toBeLessThan(0);
+  });
+
+  test("ties count at half weight", () => {
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-03T00:00:00Z", 12, 12, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: 0.2 },
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const rows = getCarryStats(JOM);
+    const dong = rows.find((r) => r.teammateSteamId === DONG)!;
+    // Dong overperf ≈ 0.133, weight = 0.5 → score ≈ 0.067 (half of
+    // what a decisive result would have produced).
+    expect(dong.proxyScore).toBeGreaterThan(0);
+    expect(dong.proxyScore).toBeCloseTo(0.067, 2);
+  });
+
+  test("premier delta uses magnitude, not signed value", () => {
+    // JOM's team loses m1, wins m2. DONG underperforms both times.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 7, 13, [
+        { steamId: JOM, team: 2, lr: 0.05 },
+        { steamId: DONG, team: 2, lr: -0.05 },
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m2", "2026-01-02T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0.05 },
+        { steamId: DONG, team: 2, lr: -0.05 },
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    // Simulate JOM's premier swinging -60 then +60.
+    db.run(
+      "UPDATE match_stats SET premier_after = 14940 WHERE steam_id=? AND match_id=?",
+      [JOM, "m1"],
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 15000 WHERE steam_id=? AND match_id=?",
+      [JOM, "m2"],
+    );
+    // LAG needs a prior row to produce a delta for m1; we only test m2 here
+    // (prev = m1's 14940, curr = m2's 15000 → +60).
+    const rows = getCarryStats(JOM);
+    const dong = rows.find((r) => r.teammateSteamId === DONG);
+    // DONG underperformed (negative overperf) × |+60| = negative.
+    expect(dong!.premierScore).toBeLessThan(0);
+  });
+
+  test("team carry aggregates per player", () => {
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: -0.05 },
+        { steamId: DONG, team: 2, lr: 0.1 },
+        { steamId: CHAR, team: 2, lr: 0.0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m2", "2026-01-02T00:00:00Z", 13, 10, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: 0.08 },
+        { steamId: CHAR, team: 2, lr: -0.05 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m3", "2026-01-03T00:00:00Z", 7, 13, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: 0.1 },
+        { steamId: CHAR, team: 2, lr: -0.1 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const ranks = getTeamCarryStats([JOM, DONG, CHAR]);
+    const dong = ranks.find((r) => r.steamId === DONG);
+    expect(dong!.proxyScore).toBeGreaterThan(0);
+    expect(ranks[0]!.steamId).toBe(DONG);
   });
 });

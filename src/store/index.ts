@@ -14,6 +14,12 @@ export {
   trackApiCall,
 } from "./analysis.js";
 export {
+  type CarryRow,
+  getCarryStats,
+  getTeamCarryStats,
+  type TeamCarryRow,
+} from "./carry.js";
+export {
   getAllGuildIds,
   getNotifyChannel,
   setNotifyChannel,
@@ -34,6 +40,8 @@ export {
   type MapStats,
 } from "./maps.js";
 export {
+  type BestFlashGame,
+  getBestFlashGame,
   getMostRecentMatchTime,
   getPlayerMatchStats,
   getPlayerStatAverages,
@@ -41,8 +49,9 @@ export {
   getRecentMatchesSince,
   getStoredMatchCount,
   isMatchProcessed,
-  isMatchStored,
   markMatchProcessed,
+  type PlayerAverages,
+  recordPremierAfter,
   saveMatchDetails,
 } from "./matches.js";
 export {
