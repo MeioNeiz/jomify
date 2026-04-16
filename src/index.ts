@@ -8,7 +8,13 @@ import { startWeeklyLeaderboard } from "./weekly.js";
 const commandMap = new Collection<string, Command>();
 for (const [name, cmd] of commands) commandMap.set(name, cmd);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+  // Default: never ping anyone. Mentions still render as clickable
+  // names but don't trigger notifications. Commands can override
+  // per-message if they need to ping (e.g. alerts).
+  allowedMentions: { parse: [] },
+});
 
 client.once(Events.ClientReady, (c) => {
   log.info({ tag: c.user.tag }, "Jomify online");
