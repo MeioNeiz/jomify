@@ -16,11 +16,8 @@ export const data = new SlashCommandBuilder()
   );
 
 export const execute = wrapCommand(async (interaction) => {
-  const guildId = requireGuild(interaction);
-  if (!guildId) {
-    await interaction.editReply("Use this in a server.");
-    return;
-  }
+  const guildId = await requireGuild(interaction);
+  if (!guildId) return;
 
   const raw = interaction.options.getString("steamids", true);
   const ids = raw

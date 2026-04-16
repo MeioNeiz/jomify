@@ -1,4 +1,6 @@
+import { and, desc, eq, sql } from "drizzle-orm";
 import db from "../db.js";
+import { leaderboardSnapshots, snapshots } from "../schema.js";
 
 export interface PlayerSnapshot {
   steamId: string;
@@ -11,118 +13,96 @@ export interface PlayerSnapshot {
   clutch: number;
 }
 
-// ── Snapshots ──
-
-export function saveSnapshots(snapshots: PlayerSnapshot[]): void {
-  const insert = db.prepare(
-    `INSERT INTO snapshots
-       (steam_id, name, premier, leetify,
-        aim, positioning, utility, clutch)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const insertMany = db.transaction((items: PlayerSnapshot[]) => {
+export function saveSnapshots(items: PlayerSnapshot[]): void {
+  if (!items.length) return;
+  db.transaction((tx) => {
     for (const s of items) {
-      insert.run(
-        s.steamId,
-        s.name,
-        s.premier,
-        s.leetify,
-        s.aim,
-        s.positioning,
-        s.utility,
-        s.clutch,
-      );
+      tx.insert(snapshots)
+        .values({
+          steamId: s.steamId,
+          name: s.name,
+          premier: s.premier,
+          leetify: s.leetify,
+          aim: s.aim,
+          positioning: s.positioning,
+          utility: s.utility,
+          clutch: s.clutch,
+        })
+        .run();
     }
   });
-  insertMany(snapshots);
 }
-
-// ── Leaderboard snapshots ──
 
 export function saveLeaderboardSnapshot(
   guildId: string,
   entries: { steamId: string; premier: number | null }[],
 ): void {
-  const insert = db.prepare(
-    `INSERT INTO leaderboard_snapshots
-       (guild_id, steam_id, premier) VALUES (?, ?, ?)`,
-  );
-  const insertMany = db.transaction((items: typeof entries) => {
-    for (const e of items) {
-      insert.run(guildId, e.steamId, e.premier);
+  if (!entries.length) return;
+  db.transaction((tx) => {
+    for (const e of entries) {
+      tx.insert(leaderboardSnapshots)
+        .values({ guildId, steamId: e.steamId, premier: e.premier })
+        .run();
     }
   });
-  insertMany(entries);
 }
 
 export function getLastLeaderboard(
   guildId: string,
 ): { steamId: string; premier: number | null }[] {
   const latest = db
-    .query(
-      `SELECT recorded_at FROM leaderboard_snapshots
-       WHERE guild_id = ?
-       ORDER BY recorded_at DESC LIMIT 1`,
-    )
-    .get(guildId) as { recorded_at: string } | null;
-
+    .select({ recordedAt: leaderboardSnapshots.recordedAt })
+    .from(leaderboardSnapshots)
+    .where(eq(leaderboardSnapshots.guildId, guildId))
+    .orderBy(desc(leaderboardSnapshots.recordedAt))
+    .limit(1)
+    .get();
   if (!latest) return [];
 
-  const rows = db
-    .query(
-      `SELECT steam_id, premier FROM leaderboard_snapshots
-       WHERE guild_id = ? AND recorded_at = ?`,
+  return db
+    .select({
+      steamId: leaderboardSnapshots.steamId,
+      premier: leaderboardSnapshots.premier,
+    })
+    .from(leaderboardSnapshots)
+    .where(
+      and(
+        eq(leaderboardSnapshots.guildId, guildId),
+        eq(leaderboardSnapshots.recordedAt, latest.recordedAt),
+      ),
     )
-    .all(guildId, latest.recorded_at) as {
-    steam_id: string;
-    premier: number | null;
-  }[];
-
-  return rows.map((r) => ({
-    steamId: r.steam_id,
-    premier: r.premier,
-  }));
+    .all();
 }
 
+/** Complex: joins latest snapshot name per steam_id via window function. */
 export function getLastLeaderboardWithNames(guildId: string): {
-  entries: {
-    name: string;
-    steamId: string;
-    premier: number | null;
-  }[];
+  entries: { name: string; steamId: string; premier: number | null }[];
   recordedAt: string | null;
 } {
   const latest = db
-    .query(
-      `SELECT recorded_at FROM leaderboard_snapshots
-       WHERE guild_id = ?
-       ORDER BY recorded_at DESC LIMIT 1`,
-    )
-    .get(guildId) as { recorded_at: string } | null;
-
+    .select({ recordedAt: leaderboardSnapshots.recordedAt })
+    .from(leaderboardSnapshots)
+    .where(eq(leaderboardSnapshots.guildId, guildId))
+    .orderBy(desc(leaderboardSnapshots.recordedAt))
+    .limit(1)
+    .get();
   if (!latest) return { entries: [], recordedAt: null };
 
-  const rows = db
-    .query(
-      `SELECT ls.steam_id, ls.premier,
-              COALESCE(s.name, ls.steam_id) as name
-       FROM leaderboard_snapshots ls
-       LEFT JOIN (
-         SELECT steam_id, name,
-           ROW_NUMBER() OVER (
-             PARTITION BY steam_id
-             ORDER BY recorded_at DESC
-           ) as rn
-         FROM snapshots
-       ) s ON s.steam_id = ls.steam_id AND s.rn = 1
-       WHERE ls.guild_id = ?
-         AND ls.recorded_at = ?`,
-    )
-    .all(guildId, latest.recorded_at) as {
-    steam_id: string;
-    premier: number | null;
-    name: string;
-  }[];
+  const rows = db.all<{ steam_id: string; premier: number | null; name: string }>(sql`
+    SELECT ls.steam_id, ls.premier,
+           COALESCE(s.name, ls.steam_id) as name
+    FROM leaderboard_snapshots ls
+    LEFT JOIN (
+      SELECT steam_id, name,
+        ROW_NUMBER() OVER (
+          PARTITION BY steam_id
+          ORDER BY recorded_at DESC
+        ) as rn
+      FROM snapshots
+    ) s ON s.steam_id = ls.steam_id AND s.rn = 1
+    WHERE ls.guild_id = ${guildId}
+      AND ls.recorded_at = ${latest.recordedAt}
+  `);
 
   return {
     entries: rows.map((r) => ({
@@ -130,79 +110,47 @@ export function getLastLeaderboardWithNames(guildId: string): {
       steamId: r.steam_id,
       premier: r.premier,
     })),
-    recordedAt: latest.recorded_at,
+    recordedAt: latest.recordedAt,
   };
 }
 
-/** Get most recent snapshot for a player (local fallback for API). */
 export function getLatestSnapshot(
   steamId: string,
 ): (PlayerSnapshot & { recordedAt: string }) | null {
   const row = db
-    .query(
-      `SELECT steam_id, name, premier, leetify,
-              aim, positioning, utility, clutch, recorded_at
-       FROM snapshots
-       WHERE steam_id = ?
-       ORDER BY recorded_at DESC LIMIT 1`,
-    )
-    .get(steamId) as {
-    steam_id: string;
-    name: string;
-    premier: number | null;
-    leetify: number | null;
-    aim: number;
-    positioning: number;
-    utility: number;
-    clutch: number;
-    recorded_at: string;
-  } | null;
-
+    .select()
+    .from(snapshots)
+    .where(eq(snapshots.steamId, steamId))
+    .orderBy(desc(snapshots.recordedAt))
+    .limit(1)
+    .get();
   if (!row) return null;
   return {
-    steamId: row.steam_id,
+    steamId: row.steamId,
     name: row.name,
     premier: row.premier,
     leetify: row.leetify,
-    aim: row.aim,
-    positioning: row.positioning,
-    utility: row.utility,
-    clutch: row.clutch,
-    recordedAt: row.recorded_at,
+    aim: row.aim ?? 0,
+    positioning: row.positioning ?? 0,
+    utility: row.utility ?? 0,
+    clutch: row.clutch ?? 0,
+    recordedAt: row.recordedAt,
   };
 }
 
-// ── Weekly leaderboard ──
-
+/** Snapshot nearest to 7 days ago (uses julianday math). */
 export function getWeekAgoLeaderboard(
   guildId: string,
 ): { steamId: string; premier: number | null }[] {
-  const nearest = db
-    .query(
-      `SELECT recorded_at FROM leaderboard_snapshots
-       WHERE guild_id = ?
-       ORDER BY ABS(
-         julianday(recorded_at)
-         - julianday('now', '-7 days')
-       ) LIMIT 1`,
-    )
-    .get(guildId) as { recorded_at: string } | null;
-
-  if (!nearest) return [];
-
-  const rows = db
-    .query(
-      `SELECT steam_id, premier
-       FROM leaderboard_snapshots
-       WHERE guild_id = ? AND recorded_at = ?`,
-    )
-    .all(guildId, nearest.recorded_at) as {
-    steam_id: string;
-    premier: number | null;
-  }[];
-
-  return rows.map((r) => ({
-    steamId: r.steam_id,
-    premier: r.premier,
-  }));
+  const rows = db.all<{ steam_id: string; premier: number | null }>(sql`
+    SELECT steam_id, premier FROM leaderboard_snapshots
+    WHERE guild_id = ${guildId}
+      AND recorded_at = (
+        SELECT recorded_at FROM leaderboard_snapshots
+        WHERE guild_id = ${guildId}
+        ORDER BY ABS(julianday(recorded_at) - julianday('now', '-7 days'))
+        LIMIT 1
+      )
+  `);
+  return rows.map((r) => ({ steamId: r.steam_id, premier: r.premier }));
 }

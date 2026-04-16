@@ -1,4 +1,5 @@
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
+import { requireGuild } from "../helpers.js";
 import {
   addTrackedPlayer,
   getAllLinkedAccounts,
@@ -35,48 +36,50 @@ export const data = new SlashCommandBuilder()
     sub.setName("all").setDescription("Track all linked users in this server"),
   );
 
-function resolveSteamId(interaction: ChatInputCommandInteraction): string | null {
+/**
+ * Resolve the target from either the `user` option (via linked accounts)
+ * or the `steamid` option. Replies + returns null if neither is usable.
+ */
+async function resolveTarget(
+  interaction: ChatInputCommandInteraction,
+  verb: "link" | "find",
+): Promise<{ steamId: string; label: string } | null> {
   const user = interaction.options.getUser("user");
-  if (user) return getSteamId(user.id);
-  return interaction.options.getString("steamid");
+  const raw = interaction.options.getString("steamid");
+
+  if (user) {
+    const steamId = getSteamId(user.id);
+    if (!steamId) {
+      const hint = verb === "link" ? " They need to run `/link` first." : "";
+      await interaction.editReply(`<@${user.id}> hasn't linked.${hint}`);
+      return null;
+    }
+    return { steamId, label: `<@${user.id}>` };
+  }
+
+  if (raw) return { steamId: raw, label: `\`${raw}\`` };
+
+  await interaction.editReply("Provide a `user` or `steamid`.");
+  return null;
 }
 
 export const execute = wrapCommand(async (interaction) => {
-  const guildId = interaction.guildId;
-  if (!guildId) {
-    await interaction.editReply("Use this in a server.");
-    return;
-  }
+  const guildId = await requireGuild(interaction);
+  if (!guildId) return;
 
   const sub = interaction.options.getSubcommand();
 
   if (sub === "add") {
-    const user = interaction.options.getUser("user");
-    const steamId = resolveSteamId(interaction);
-    if (!steamId) {
-      const msg = user
-        ? `<@${user.id}> hasn't linked. They need to run \`/link\` first.`
-        : "Provide a `user` or `steamid`.";
-      await interaction.editReply(msg);
-      return;
-    }
-    addTrackedPlayer(guildId, steamId);
-    const count = await backfillPlayer(steamId);
-    const label = user ? `<@${user.id}>` : `\`${steamId}\``;
-    await interaction.editReply(`Now tracking ${label}. Loaded ${count} matches.`);
+    const target = await resolveTarget(interaction, "link");
+    if (!target) return;
+    addTrackedPlayer(guildId, target.steamId);
+    const count = await backfillPlayer(target.steamId);
+    await interaction.editReply(`Now tracking ${target.label}. Loaded ${count} matches.`);
   } else if (sub === "remove") {
-    const user = interaction.options.getUser("user");
-    const steamId = resolveSteamId(interaction);
-    if (!steamId) {
-      const msg = user
-        ? `<@${user.id}> hasn't linked.`
-        : "Provide a `user` or `steamid`.";
-      await interaction.editReply(msg);
-      return;
-    }
-    removeTrackedPlayer(guildId, steamId);
-    const label = user ? `<@${user.id}>` : `\`${steamId}\``;
-    await interaction.editReply(`Stopped tracking ${label}.`);
+    const target = await resolveTarget(interaction, "find");
+    if (!target) return;
+    removeTrackedPlayer(guildId, target.steamId);
+    await interaction.editReply(`Stopped tracking ${target.label}.`);
   } else if (sub === "all") {
     const linked = getAllLinkedAccounts();
     if (!linked.length) {

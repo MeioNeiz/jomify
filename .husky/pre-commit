@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Fail-fast: typecheck + lint + dead-code + tests before every commit.
+# Run `git commit --no-verify` in rare cases where you need to bypass.
+bun run check && bun test

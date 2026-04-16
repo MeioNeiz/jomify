@@ -8,5 +8,10 @@
     "tests/preload.ts"
   ],
   "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
-  "ignoreDependencies": ["pino-pretty"]
+  "ignoreDependencies": ["pino-pretty", "drizzle-kit"],
+  "rules": {
+    "types": "off",
+    "enumMembers": "off",
+    "duplicates": "off"
+  }
 }

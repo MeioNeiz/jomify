@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 // Use in-memory DB for tests
-import db from "../src/db.js";
+import { sqlite as db } from "../src/db.js";
 
 import {
   addTrackedPlayer,

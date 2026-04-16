@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import log from "../logger.js";
-import { trackApiCall } from "../store.js";
+import { saveSnapshots, trackApiCall } from "../store.js";
 import type { LeetifyMatchDetails, LeetifyProfile } from "./types.js";
 
 const BASE_URL = "https://api-public.cs-prod.leetify.com";
@@ -72,17 +72,23 @@ async function leetifyFetch<T>(path: string): Promise<T> {
   throw new Error("Leetify API: max retries exceeded");
 }
 
-// ── Profile cache (TTL: 5 min) ──
-
-const PROFILE_TTL = 5 * 60 * 1000;
-const profileCache = new Map<string, { data: LeetifyProfile; expiresAt: number }>();
-
+// Snapshots in the DB are the only profile cache. Every successful fetch
+// is written through so /stats, /compare, /leaderboard can serve stale
+// while revalidating.
 export async function getProfile(steamId: string): Promise<LeetifyProfile> {
-  const cached = profileCache.get(steamId);
-  if (cached && cached.expiresAt > Date.now()) return cached.data;
-
   const data = await leetifyFetch<LeetifyProfile>(`/v3/profile?steam64_id=${steamId}`);
-  profileCache.set(steamId, { data, expiresAt: Date.now() + PROFILE_TTL });
+  saveSnapshots([
+    {
+      steamId: data.steam64_id,
+      name: data.name,
+      premier: data.ranks?.premier ?? null,
+      leetify: data.ranks?.leetify ?? null,
+      aim: data.rating?.aim ?? 0,
+      positioning: data.rating?.positioning ?? 0,
+      utility: data.rating?.utility ?? 0,
+      clutch: data.rating?.clutch ?? 0,
+    },
+  ]);
   return data;
 }
 

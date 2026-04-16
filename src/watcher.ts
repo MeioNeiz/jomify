@@ -20,6 +20,7 @@ import {
   getStoredMatchCount,
   isMatchProcessed,
   markMatchProcessed,
+  recordPremierAfter,
   saveMatchDetails,
   updatePlayerStreak,
 } from "./store.js";
@@ -85,8 +86,7 @@ async function checkPlayer(client: Client, steamId: string) {
             `** \u2192 ` +
             `**${currentPremier.toLocaleString()}` +
             `** (+${diff})`,
-        )
-        .setTimestamp();
+        );
       await sendToGuilds(client, steamId, embed);
     }
   }
@@ -108,6 +108,16 @@ async function checkPlayer(client: Client, steamId: string) {
     try {
       details = await getMatchDetails(match.id);
       saveMatchDetails(details);
+      // Stamp the per-match Premier snapshot so /carry can compute rating
+      // deltas. Leetify exposes this on the match itself as `rank` when
+      // `rank_type` is the premier system. If not, fall back to the
+      // profile's current premier (close enough when the match is the
+      // most recent one we're processing).
+      const rank =
+        match.rank_type?.toLowerCase().includes("premier") && match.rank
+          ? match.rank
+          : currentPremier;
+      if (rank != null) recordPremierAfter(match.id, steamId, rank);
     } catch (err) {
       log.warn({ matchId: match.id, err }, "Failed to fetch match");
     }
@@ -136,8 +146,7 @@ async function checkPlayer(client: Client, steamId: string) {
       const embed = new EmbedBuilder()
         .setTitle("Rough Game")
         .setColor(0xff0000)
-        .setDescription(desc)
-        .setTimestamp();
+        .setDescription(desc);
       await sendToGuilds(client, steamId, embed);
     }
 
@@ -163,8 +172,7 @@ async function checkPlayer(client: Client, steamId: string) {
       const embed = new EmbedBuilder()
         .setTitle("Great Game!")
         .setColor(0x00ff00)
-        .setDescription(desc)
-        .setTimestamp();
+        .setDescription(desc);
       await sendToGuilds(client, steamId, embed);
     }
 
@@ -176,8 +184,7 @@ async function checkPlayer(client: Client, steamId: string) {
         const embed = new EmbedBuilder()
           .setTitle("Monster Game!")
           .setColor(0x00ff00)
-          .setDescription(desc)
-          .setTimestamp();
+          .setDescription(desc);
         await sendToGuilds(client, steamId, embed);
       }
     }
@@ -196,8 +203,10 @@ async function checkPlayer(client: Client, steamId: string) {
   }
 }
 
+const CYCLE_MS = 5 * 60 * 1000;
+const MIN_GAP_MS = 1_000;
+
 export function startWatcher(client: Client) {
-  // Seed premier ranks — sequential, no retries on failure
   const steamIds = getAllTrackedSteamIds();
   (async () => {
     for (const id of steamIds) {
@@ -213,19 +222,22 @@ export function startWatcher(client: Client) {
         if (err instanceof LeetifyUnavailableError) break;
         log.warn({ steamId: id }, "Startup seed failed");
       }
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, MIN_GAP_MS));
     }
   })();
 
-  const INTERVAL = 5 * 60 * 1000;
-
-  setInterval(async () => {
-    const ids = getAllTrackedSteamIds();
-    for (const id of ids) {
-      await checkPlayer(client, id);
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }, INTERVAL);
+  // Rotate: one player per tick, gap = CYCLE_MS / playerCount (min 1s).
+  // Spreads API load evenly across the cycle instead of bursting every 5 min.
+  let queue: string[] = [];
+  const tick = async () => {
+    if (queue.length === 0) queue = [...getAllTrackedSteamIds()];
+    const id = queue.shift();
+    if (id) await checkPlayer(client, id);
+    const count = Math.max(queue.length, getAllTrackedSteamIds().length);
+    const gap = Math.max(MIN_GAP_MS, Math.floor(CYCLE_MS / (count || 1)));
+    setTimeout(tick, gap);
+  };
+  setTimeout(tick, MIN_GAP_MS);
 
   log.info({ players: steamIds.length }, "Watcher started");
 }

@@ -7,6 +7,11 @@ const BASELINES: Record<string, { mean: number; std: number }> = {
   reaction_time: { mean: 0.4, std: 0.12 },
   kd_ratio: { mean: 1.0, std: 0.3 },
   dpr: { mean: 75, std: 12 },
+  // Preaim: angle (degrees) crosshair-to-enemy the moment they're first seen.
+  // Legit players sit around 5–8°; cheats/bhopping aimlockers go <2°.
+  preaim: { mean: 6, std: 2 },
+  // Counter-strafing ratio: too close to 1 is bot-like.
+  counter_strafing_ratio: { mean: 0.6, std: 0.15 },
 };
 
 function mean(vals: number[]): number {
@@ -128,6 +133,51 @@ export function analyseStats(stats: LeetifyPlayerStats[]): AnalysisResult {
     z: multiFlag ? 2.5 : 0,
     flagged: multiFlag,
   });
+
+  // Preaim: lower than baseline is suspicious (inverted z).
+  const preaimVals = stats.map((p) => p.preaim).filter((v): v is number => v != null);
+  if (preaimVals.length) {
+    const preaimAvg = mean(preaimVals);
+    const preaimZ = -zScore(preaimAvg, "preaim");
+    if (preaimZ > 2) totalScore += preaimZ;
+    checks.push({
+      name: "Preaim angle",
+      value: `${fmt(preaimAvg, 1)}° (z=${fmt(preaimZ, 1)})`,
+      z: preaimZ,
+      flagged: preaimZ > 2,
+    });
+  }
+
+  // On-sight shooting accuracy — hit rate on shots fired while enemy visible.
+  const onSightFired = stats.reduce((s, p) => s + (p.shots_fired_enemy_spotted ?? 0), 0);
+  const onSightHit = stats.reduce((s, p) => s + (p.shots_hit_enemy_spotted ?? 0), 0);
+  if (onSightFired > 0) {
+    const onSightAvg = onSightHit / onSightFired;
+    const onSightZ = zScore(onSightAvg, "accuracy_enemy_spotted");
+    if (onSightZ > 2) totalScore += onSightZ;
+    checks.push({
+      name: "On-sight accuracy",
+      value: `${fmt(onSightAvg * 100)}% (z=${fmt(onSightZ, 1)})`,
+      z: onSightZ,
+      flagged: onSightZ > 2,
+    });
+  }
+
+  // Counter-strafing ratio: too perfect looks bot-like.
+  const csVals = stats
+    .map((p) => p.counter_strafing_shots_good_ratio)
+    .filter((v): v is number => v != null);
+  if (csVals.length) {
+    const csAvg = mean(csVals);
+    const csZ = zScore(csAvg, "counter_strafing_ratio");
+    if (csZ > 2) totalScore += csZ;
+    checks.push({
+      name: "Counter-strafe",
+      value: `${fmt(csAvg * 100)}% (z=${fmt(csZ, 1)})`,
+      z: csZ,
+      flagged: csZ > 2.5,
+    });
+  }
 
   return { checks, score: totalScore };
 }

@@ -1,40 +1,39 @@
+import { and, eq } from "drizzle-orm";
 import db from "../db.js";
-
-// ── Tracked players ──
+import { trackedPlayers } from "../schema.js";
 
 export function getTrackedPlayers(guildId: string): string[] {
-  const rows = db
-    .query("SELECT steam_id FROM tracked_players WHERE guild_id = ?")
-    .all(guildId) as { steam_id: string }[];
-  return rows.map((r) => r.steam_id);
+  return db
+    .select({ steamId: trackedPlayers.steamId })
+    .from(trackedPlayers)
+    .where(eq(trackedPlayers.guildId, guildId))
+    .all()
+    .map((r) => r.steamId);
 }
 
 export function getAllTrackedSteamIds(): string[] {
-  const rows = db.query("SELECT DISTINCT steam_id FROM tracked_players").all() as {
-    steam_id: string;
-  }[];
-  return rows.map((r) => r.steam_id);
+  return db
+    .selectDistinct({ steamId: trackedPlayers.steamId })
+    .from(trackedPlayers)
+    .all()
+    .map((r) => r.steamId);
 }
 
 export function getGuildsForSteamId(steamId: string): string[] {
-  const rows = db
-    .query("SELECT guild_id FROM tracked_players WHERE steam_id = ?")
-    .all(steamId) as { guild_id: string }[];
-  return rows.map((r) => r.guild_id);
+  return db
+    .select({ guildId: trackedPlayers.guildId })
+    .from(trackedPlayers)
+    .where(eq(trackedPlayers.steamId, steamId))
+    .all()
+    .map((r) => r.guildId);
 }
 
 export function addTrackedPlayer(guildId: string, steamId: string): void {
-  db.run(
-    `INSERT OR IGNORE INTO tracked_players
-       (guild_id, steam_id) VALUES (?, ?)`,
-    [guildId, steamId],
-  );
+  db.insert(trackedPlayers).values({ guildId, steamId }).onConflictDoNothing().run();
 }
 
 export function removeTrackedPlayer(guildId: string, steamId: string): void {
-  db.run(
-    `DELETE FROM tracked_players
-     WHERE guild_id = ? AND steam_id = ?`,
-    [guildId, steamId],
-  );
+  db.delete(trackedPlayers)
+    .where(and(eq(trackedPlayers.guildId, guildId), eq(trackedPlayers.steamId, steamId)))
+    .run();
 }

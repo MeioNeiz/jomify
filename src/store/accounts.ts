@@ -1,6 +1,6 @@
+import { eq, or } from "drizzle-orm";
 import db from "../db.js";
-
-// ── Linked accounts ──
+import { linkedAccounts } from "../schema.js";
 
 export type LinkResult = {
   previousSteamId: string | null;
@@ -10,58 +10,60 @@ export type LinkResult = {
 /** Always links, overwriting any prior link on either side. */
 export function linkAccount(discordId: string, steamId: string): LinkResult {
   const prevForDiscord = db
-    .query(`SELECT steam_id FROM linked_accounts WHERE discord_id = ?`)
-    .get(discordId) as { steam_id: string } | null;
+    .select({ steamId: linkedAccounts.steamId })
+    .from(linkedAccounts)
+    .where(eq(linkedAccounts.discordId, discordId))
+    .get();
 
   const prevForSteam = db
-    .query(`SELECT discord_id FROM linked_accounts WHERE steam_id = ?`)
-    .get(steamId) as { discord_id: string } | null;
+    .select({ discordId: linkedAccounts.discordId })
+    .from(linkedAccounts)
+    .where(eq(linkedAccounts.steamId, steamId))
+    .get();
 
-  db.run(`DELETE FROM linked_accounts WHERE discord_id = ? OR steam_id = ?`, [
-    discordId,
-    steamId,
-  ]);
-  db.run(`INSERT INTO linked_accounts (discord_id, steam_id) VALUES (?, ?)`, [
-    discordId,
-    steamId,
-  ]);
+  db.delete(linkedAccounts)
+    .where(
+      or(eq(linkedAccounts.discordId, discordId), eq(linkedAccounts.steamId, steamId)),
+    )
+    .run();
+  db.insert(linkedAccounts).values({ discordId, steamId }).run();
 
   return {
     previousSteamId:
-      prevForDiscord && prevForDiscord.steam_id !== steamId
-        ? prevForDiscord.steam_id
+      prevForDiscord && prevForDiscord.steamId !== steamId
+        ? prevForDiscord.steamId
         : null,
     previousDiscordId:
-      prevForSteam && prevForSteam.discord_id !== discordId
-        ? prevForSteam.discord_id
+      prevForSteam && prevForSteam.discordId !== discordId
+        ? prevForSteam.discordId
         : null,
   };
 }
 
 export function getSteamId(discordId: string): string | null {
   const row = db
-    .query("SELECT steam_id FROM linked_accounts WHERE discord_id = ?")
-    .get(discordId) as { steam_id: string } | null;
-  return row?.steam_id ?? null;
+    .select({ steamId: linkedAccounts.steamId })
+    .from(linkedAccounts)
+    .where(eq(linkedAccounts.discordId, discordId))
+    .get();
+  return row?.steamId ?? null;
 }
 
 export function getDiscordId(steamId: string): string | null {
   const row = db
-    .query("SELECT discord_id FROM linked_accounts WHERE steam_id = ?")
-    .get(steamId) as { discord_id: string } | null;
-  return row?.discord_id ?? null;
+    .select({ discordId: linkedAccounts.discordId })
+    .from(linkedAccounts)
+    .where(eq(linkedAccounts.steamId, steamId))
+    .get();
+  return row?.discordId ?? null;
 }
 
-export function getAllLinkedAccounts(): {
-  discordId: string;
-  steamId: string;
-}[] {
-  const rows = db.query("SELECT discord_id, steam_id FROM linked_accounts").all() as {
-    discord_id: string;
-    steam_id: string;
-  }[];
-  return rows.map((r) => ({
-    discordId: r.discord_id,
-    steamId: r.steam_id,
-  }));
+export function getAllLinkedAccounts(): { discordId: string; steamId: string }[] {
+  return db
+    .select({
+      discordId: linkedAccounts.discordId,
+      steamId: linkedAccounts.steamId,
+    })
+    .from(linkedAccounts)
+    .all();
 }
