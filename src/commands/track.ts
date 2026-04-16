@@ -3,6 +3,7 @@ import { requireGuild } from "../helpers.js";
 import {
   addTrackedPlayer,
   getAllLinkedAccounts,
+  getDiscordId,
   getSteamId,
   getTrackedPlayers,
   removeTrackedPlayer,
@@ -103,7 +104,10 @@ export const execute = wrapCommand(async (interaction) => {
       await interaction.editReply("No players tracked yet.");
       return;
     }
-    const list = players.map((id) => `\u2022 \`${id}\``);
+    const list = players.map((id) => {
+      const discordId = getDiscordId(id);
+      return discordId ? `\u2022 <@${discordId}> \u2014 \`${id}\`` : `\u2022 \`${id}\``;
+    });
     await interaction.editReply(`**Tracked players:**\n${list.join("\n")}`);
   }
 });
