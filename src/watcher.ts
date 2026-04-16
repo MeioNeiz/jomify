@@ -6,6 +6,7 @@ import {
   scanOpponents,
   sendToGuilds,
 } from "./alerts.js";
+import { config } from "./config.js";
 import {
   getMatchDetails,
   getMatchHistory,
@@ -230,7 +231,15 @@ export function startWatcher(client: Client) {
   // Spreads API load evenly across the cycle instead of bursting every 5 min.
   let queue: string[] = [];
   const tick = async () => {
-    if (queue.length === 0) queue = [...getAllTrackedSteamIds()];
+    if (queue.length === 0) {
+      queue = [...getAllTrackedSteamIds()];
+      // Heartbeat at the start of each cycle. If this ping stops arriving
+      // at Healthchecks.io, the bot has stalled or crashed and we get an
+      // email within the configured grace period.
+      if (config.healthcheckUrl) {
+        fetch(config.healthcheckUrl).catch(() => undefined);
+      }
+    }
     const id = queue.shift();
     if (id) await checkPlayer(client, id);
     const count = Math.max(queue.length, getAllTrackedSteamIds().length);

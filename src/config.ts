@@ -25,4 +25,8 @@ export const config = {
   get devGuildId(): string | null {
     return process.env.DEV_GUILD_ID ?? null;
   },
+  /** Healthchecks.io ping URL. Bot pings after each watcher tick. */
+  get healthcheckUrl(): string | null {
+    return process.env.HEALTHCHECK_URL ?? null;
+  },
 };
