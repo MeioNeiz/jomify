@@ -2,22 +2,22 @@
 # Talk to prod from your laptop. Everything SSHes to the VM.
 #
 # Log viewing:
-#   ./scripts/logs.sh                       # live tail (Ctrl-C to quit)
-#   ./scripts/logs.sh --once                # last N lines (default 50)
-#   ./scripts/logs.sh -n 200                # live tail with 200 lines backlog
-#   ./scripts/logs.sh --errors              # live-tail errors only
-#   ./scripts/logs.sh --errors --since "1 day ago"
-#   ./scripts/logs.sh --since "2 hours ago"
+#   ./scripts/bot.sh                       # live tail (Ctrl-C to quit)
+#   ./scripts/bot.sh --once                # last N lines (default 50)
+#   ./scripts/bot.sh -n 200                # live tail with 200 lines backlog
+#   ./scripts/bot.sh --errors              # live-tail errors only
+#   ./scripts/bot.sh --errors --since "1 day ago"
+#   ./scripts/bot.sh --since "2 hours ago"
 #
 # Service control:
-#   ./scripts/logs.sh --status              # one-shot health summary
-#   ./scripts/logs.sh --stop                # stop prod bot
-#   ./scripts/logs.sh --start               # start prod bot
-#   ./scripts/logs.sh --restart             # restart prod bot
-#   ./scripts/logs.sh --test-alert          # fire a /fail ping to Healthchecks
+#   ./scripts/bot.sh --status              # one-shot health summary
+#   ./scripts/bot.sh --stop                # stop prod bot
+#   ./scripts/bot.sh --start               # start prod bot
+#   ./scripts/bot.sh --restart             # restart prod bot
+#   ./scripts/bot.sh --test-alert          # fire a /fail ping to Healthchecks
 #
 # Override host/user via env:
-#   JOMIFY_HOST=1.2.3.4 ./scripts/logs.sh
+#   JOMIFY_HOST=1.2.3.4 ./scripts/bot.sh
 
 set -euo pipefail
 
