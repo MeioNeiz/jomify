@@ -280,6 +280,57 @@ export function getBestMatch(
   return row;
 }
 
+export interface HistoryRow {
+  matchId: string;
+  mapName: string;
+  finishedAt: string;
+  kills: number;
+  deaths: number;
+  assists: number;
+  dpr: number;
+  rating: number | null;
+  accuracyHead: number | null;
+  roundsWon: number | null;
+  roundsLost: number | null;
+  premierAfter: number | null;
+  premierDelta: number | null;
+}
+
+/**
+ * Recent-first per-match history for one player, with chronological
+ * Premier delta (premier_after − prev premier_after). null when either
+ * end is missing (e.g. first tracked match).
+ */
+export function getPlayerHistory(steamId: string, limit: number): HistoryRow[] {
+  return sqlite
+    .query(
+      `SELECT * FROM (
+         SELECT
+           ms.match_id   AS matchId,
+           m.map_name    AS mapName,
+           m.finished_at AS finishedAt,
+           ms.total_kills   AS kills,
+           ms.total_deaths  AS deaths,
+           ms.total_assists AS assists,
+           ms.dpr           AS dpr,
+           ms.leetify_rating AS rating,
+           ms.accuracy_head  AS accuracyHead,
+           ms.rounds_won    AS roundsWon,
+           ms.rounds_lost   AS roundsLost,
+           ms.premier_after AS premierAfter,
+           ms.premier_after - LAG(ms.premier_after) OVER (
+             ORDER BY m.finished_at
+           ) AS premierDelta
+         FROM match_stats ms
+         JOIN matches m ON m.match_id = ms.match_id
+         WHERE ms.steam_id = ?
+       )
+       ORDER BY finishedAt DESC
+       LIMIT ?`,
+    )
+    .all(steamId, limit) as HistoryRow[];
+}
+
 /**
  * Stamp a player's post-match Premier rating onto a match row. Called by
  * the watcher when it processes a freshly-finished match. Enables the

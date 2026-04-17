@@ -9,6 +9,7 @@ import * as carry from "./carry.js";
 import * as compare from "./compare.js";
 import * as flash from "./flash.js";
 import * as floatCmd from "./float.js";
+import * as history from "./history.js";
 import * as importCmd from "./import.js";
 import * as inv from "./inv.js";
 import * as kobe from "./kobe.js";
@@ -48,4 +49,5 @@ export const commands: [string, Command][] = [
   ["team", team],
   ["carry", carry],
   ["best", best],
+  ["history", history],
 ];
