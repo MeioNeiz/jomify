@@ -1,5 +1,6 @@
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
 import { requireGuild } from "../helpers.js";
+import { resolveSteamId } from "../steam/client.js";
 import {
   addTrackedPlayer,
   getAllLinkedAccounts,
@@ -58,7 +59,20 @@ async function resolveTarget(
     return { steamId, label: `<@${user.id}>` };
   }
 
-  if (raw) return { steamId: raw, label: `\`${raw}\`` };
+  if (raw) {
+    const result = await resolveSteamId(raw);
+    if (!result.ok) {
+      const msg =
+        result.reason === "not-found"
+          ? `Couldn't find a Steam profile for \`${raw}\`.`
+          : result.reason === "invalid-input"
+            ? `\`${raw}\` doesn't look like a Steam ID, profile URL, or vanity name.`
+            : "Steam API is unreachable — try again in a moment.";
+      await interaction.editReply(msg);
+      return null;
+    }
+    return { steamId: result.steamId, label: `\`${result.steamId}\`` };
+  }
 
   await interaction.editReply("Provide a `user` or `steamid`.");
   return null;
