@@ -106,7 +106,7 @@ export const execute = wrapCommand(async (interaction) => {
         .setColor(0xf84982)
         .setDescription(
           `**${match.name}** on **${match.mapName}**\n${outcome}   ${relTime(match.finishedAt)}` +
-            (cached ? freshnessSuffix(latest) : ""),
+            (cached ? freshnessSuffix(latest, "snapshot from") : ""),
         )
         .addFields(
           { name: conf.label, value: `**${headline}**`, inline: true },

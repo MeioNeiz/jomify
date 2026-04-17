@@ -75,7 +75,9 @@ export const execute = wrapCommand(async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle("Flashbang Shame (last 30)")
         .setColor(0xffff00)
-        .setDescription(`${header}\n\n${lines.join("\n")}${freshnessSuffix(latest)}`);
+        .setDescription(
+          `${header}\n\n${lines.join("\n")}${freshnessSuffix(latest, "last match")}`,
+        );
       return { embeds: [embed] };
     },
     missingMessage: "No match data yet.",
