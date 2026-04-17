@@ -1,5 +1,9 @@
 import type { ChatInputCommandInteraction } from "discord.js";
-import { getProfile, LeetifyNotFoundError } from "./leetify/client.js";
+import {
+  getProfile,
+  isLeetifyCircuitOpen,
+  LeetifyNotFoundError,
+} from "./leetify/client.js";
 import type { LeetifyProfile } from "./leetify/types.js";
 import { getTrackedPlayers, isLeetifyUnknown } from "./store.js";
 
@@ -75,10 +79,16 @@ export function relTime(iso: string | null | undefined): string {
   return `<t:${Math.floor(t / 1000)}:R>`;
 }
 
-/** Standard trailing italic line for embeds backed by stored/cached data. */
+/**
+ * Standard trailing italic line for embeds backed by stored/cached data.
+ * Automatically appends "Leetify unavailable" when the circuit breaker
+ * is tripped — signals to users that the snapshot they're looking at
+ * isn't the most recent available because upstream is down.
+ */
 export function freshnessSuffix(
   iso: string | null | undefined,
   prefix = "data as of",
 ): string {
-  return `\n\n_${prefix} ${relTime(iso)}_`;
+  const upstream = isLeetifyCircuitOpen() ? " \u00B7 Leetify unavailable" : "";
+  return `\n\n_${prefix} ${relTime(iso)}${upstream}_`;
 }
