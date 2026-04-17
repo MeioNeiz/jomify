@@ -16,6 +16,7 @@
 #   ./scripts/bot.sh --restart             # restart prod bot
 #   ./scripts/bot.sh --test-alert          # fire a /fail ping to Healthchecks
 #   ./scripts/bot.sh --backup-now          # run the daily DB backup immediately
+#   ./scripts/bot.sh --backup-now pre-foo  # ad-hoc backup tagged 'pre-foo'
 #   ./scripts/bot.sh --restore              # restore latest backup
 #   ./scripts/bot.sh --restore 2026-04-16   # restore a specific date
 #
@@ -32,6 +33,7 @@ PRIORITY=""
 SINCE=""
 ACTION=""
 RESTORE_DATE=""
+BACKUP_TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,7 +45,14 @@ while [[ $# -gt 0 ]]; do
     --start) ACTION="start"; shift ;;
     --restart) ACTION="restart"; shift ;;
     --test-alert) ACTION="test-alert"; shift ;;
-    --backup-now) ACTION="backup-now"; shift ;;
+    --backup-now)
+      ACTION="backup-now"
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        BACKUP_TAG="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
     --restore)
       ACTION="restore"
       if [[ $# -ge 2 && "$2" != --* ]]; then
@@ -90,7 +99,13 @@ case "$ACTION" in
     '
     ;;
   backup-now)
-    ssh "$SSH_USER@$HOST" "sudo systemctl start jomify-backup.service && sudo journalctl -u jomify-backup -n 20 --no-pager -o cat"
+    if [[ -n "$BACKUP_TAG" ]]; then
+      # Tagged backup bypasses the systemd unit so the tag argument
+      # reaches backup.sh. Still runs on the VM.
+      ssh "$SSH_USER@$HOST" "cd ~/jomify && git pull --quiet && ./scripts/backup.sh '$BACKUP_TAG'"
+    else
+      ssh "$SSH_USER@$HOST" "sudo systemctl start jomify-backup.service && sudo journalctl -u jomify-backup -n 20 --no-pager -o cat"
+    fi
     ;;
   restore)
     # -t allocates a PTY so the restore script's "type yes" prompt works.
