@@ -1,7 +1,12 @@
 import type { ZodType } from "zod";
 import { config } from "../config.js";
 import log from "../logger.js";
-import { saveSnapshots, trackApiCall } from "../store.js";
+import {
+  clearLeetifyUnknown,
+  markLeetifyUnknown,
+  saveSnapshots,
+  trackApiCall,
+} from "../store.js";
 import {
   leetifyMatchDetailsSchema,
   leetifyMatchHistorySchema,
@@ -40,6 +45,17 @@ export class LeetifyUnavailableError extends Error {
   }
 }
 
+/**
+ * Thrown when Leetify returns 404 for a Steam account — the user exists
+ * on Steam but hasn't set up a Leetify profile. Callers should treat
+ * this as a persistent state rather than a retryable failure.
+ */
+export class LeetifyNotFoundError extends Error {
+  constructor(public readonly steamId: string) {
+    super(`Leetify: no profile for ${steamId}`);
+  }
+}
+
 // ── Fetch with retries ──
 
 // We validate the shape at runtime via zod, but the declared return type T
@@ -69,10 +85,11 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
 
     if (!res.ok) {
       if (retryable) tripCircuit();
-      log.warn(
-        { status: res.status, endpoint, attempts: attempt + 1 },
-        "Leetify API error",
-      );
+      // 404s are persistent (user has no Leetify profile); callers mark
+      // them and stop polling, so warn-level would be noise.
+      const meta = { status: res.status, endpoint, attempts: attempt + 1 };
+      if (res.status === 404) log.debug(meta, "Leetify API error");
+      else log.warn(meta, "Leetify API error");
       throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
     }
 
@@ -92,14 +109,30 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
   throw new Error("Leetify API: max retries exceeded");
 }
 
+function is404(err: unknown): boolean {
+  return err instanceof Error && /\b404\b/.test(err.message);
+}
+
 // Snapshots in the DB are the only profile cache. Every successful fetch
 // is written through so /stats, /compare, /leaderboard can serve stale
 // while revalidating.
 export async function getProfile(steamId: string): Promise<LeetifyProfile> {
-  const data = await leetifyFetch<LeetifyProfile>(
-    `/v3/profile?steam64_id=${steamId}`,
-    leetifyProfileSchema,
-  );
+  let data: LeetifyProfile;
+  try {
+    data = await leetifyFetch<LeetifyProfile>(
+      `/v3/profile?steam64_id=${steamId}`,
+      leetifyProfileSchema,
+    );
+  } catch (err) {
+    if (is404(err)) {
+      markLeetifyUnknown(steamId);
+      throw new LeetifyNotFoundError(steamId);
+    }
+    throw err;
+  }
+  // Successful fetch — if the user was previously marked unknown, they
+  // just signed up. Clear the mark so future polls proceed normally.
+  clearLeetifyUnknown(steamId);
   saveSnapshots([
     {
       steamId: data.steam64_id,
@@ -116,10 +149,18 @@ export async function getProfile(steamId: string): Promise<LeetifyProfile> {
 }
 
 export async function getMatchHistory(steamId: string): Promise<LeetifyMatchDetails[]> {
-  return leetifyFetch<LeetifyMatchDetails[]>(
-    `/v3/profile/matches?steam64_id=${steamId}`,
-    leetifyMatchHistorySchema,
-  );
+  try {
+    return await leetifyFetch<LeetifyMatchDetails[]>(
+      `/v3/profile/matches?steam64_id=${steamId}`,
+      leetifyMatchHistorySchema,
+    );
+  } catch (err) {
+    if (is404(err)) {
+      markLeetifyUnknown(steamId);
+      throw new LeetifyNotFoundError(steamId);
+    }
+    throw err;
+  }
 }
 
 export async function getMatchDetails(gameId: string): Promise<LeetifyMatchDetails> {

@@ -62,9 +62,7 @@ export const execute = wrapCommand(async (interaction) => {
         { name: "Premier", value: v.premier?.toLocaleString() ?? "N/A", inline: true },
       );
       if (cached) {
-        embed.setDescription(
-          freshnessSuffix(snapshotAt, "cached \u2014 last synced").trim(),
-        );
+        embed.setDescription(freshnessSuffix(snapshotAt, "snapshot from").trim());
       }
       return { embeds: [embed] };
     },

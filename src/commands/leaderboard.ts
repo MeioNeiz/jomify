@@ -101,11 +101,10 @@ export const execute = wrapCommand(async (interaction) => {
         .sort((a, b) => (b.premier ?? 0) - (a.premier ?? 0))
         .map((e) => e.steamId);
       const lines = buildLines(v.entries, prevMap, prevOrder);
-      const title = cached ? "Leaderboard (cached)" : "Leaderboard";
       const desc = cached
         ? lines.join("\n") + freshnessSuffix(snapshotAt, "snapshot from")
         : lines.join("\n");
-      return { embeds: [leetifyEmbed(title).setDescription(desc)] };
+      return { embeds: [leetifyEmbed("Leaderboard").setDescription(desc)] };
     },
     missingMessage:
       "Leetify is down and there's no cached leaderboard yet \u2014 try again shortly.",
