@@ -1,15 +1,7 @@
 import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
-import {
-  freshnessSuffix,
-  kdRatio,
-  outcomeTag,
-  relTime,
-  requireTrackedGuild,
-} from "../helpers.js";
+import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import {
-  type BestFlashGame,
-  getBestFlashGame,
   getMostRecentMatchTime,
   getPlayerMatchStats,
   getPlayerStatAverages,
@@ -28,7 +20,6 @@ type Entry = {
 };
 type View = {
   entries: Entry[];
-  best: BestFlashGame | null;
   latest: string | null;
 };
 
@@ -47,43 +38,10 @@ function computeView(steamIds: string[]): View {
   }
   // Worst flasher first: highest rate of flashes hitting teammates.
   entries.sort((a, b) => b.teamRate - a.teamRate);
-  return {
-    entries,
-    best: getBestFlashGame(steamIds, 20),
-    latest: getMostRecentMatchTime(steamIds),
-  };
+  return { entries, latest: getMostRecentMatchTime(steamIds) };
 }
 
 const MEDALS = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
-
-function addBestFlashFields(embed: EmbedBuilder, b: BestFlashGame): void {
-  const outcome = outcomeTag(b.roundsWon ?? 0, b.roundsLost ?? 0);
-  const duration = b.avgBlindDuration.toFixed(1);
-  embed.addFields(
-    {
-      name: "\u{1F3C6} Best flash game (last 20d)",
-      value: `**${b.name}** on **${b.mapName}**\n${outcome}   ${relTime(b.finishedAt)}`,
-      inline: false,
-    },
-    {
-      name: "Flashes",
-      value:
-        `\u{1F4A5} enemies hit: **${b.enemyFlashes}** (${duration}s avg)\n` +
-        `\u26A1 kills: **${b.leadingToKill}**\n` +
-        `\u{1F91D} team hits: **${b.teamFlashes}**`,
-      inline: true,
-    },
-    {
-      name: "Game",
-      value:
-        `${b.kills}/${b.deaths}/${b.assists} KDA\n` +
-        `${kdRatio(b.kills, b.deaths)} K/D\n` +
-        `${Math.round(b.dpr)} ADR` +
-        (b.rating != null ? `\n${b.rating.toFixed(2)} rating` : ""),
-      inline: true,
-    },
-  );
-}
 
 export const execute = wrapCommand(async (interaction) => {
   const guild = await requireTrackedGuild(interaction);
@@ -100,7 +58,7 @@ export const execute = wrapCommand(async (interaction) => {
       await refreshPlayers(steamIds);
       return computeView(steamIds);
     },
-    render: ({ entries, best, latest }) => {
+    render: ({ entries, latest }) => {
       const top = entries.slice(0, 3);
       const lines = top.map((e, i) => {
         const medal = MEDALS[i] ?? `${i + 1}.`;
@@ -118,7 +76,6 @@ export const execute = wrapCommand(async (interaction) => {
         .setTitle("Flashbang Shame (last 30)")
         .setColor(0xffff00)
         .setDescription(`${header}\n\n${lines.join("\n")}${freshnessSuffix(latest)}`);
-      if (best) addBestFlashFields(embed, best);
       return { embeds: [embed] };
     },
     missingMessage: "No match data yet.",
