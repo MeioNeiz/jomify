@@ -35,6 +35,13 @@ const GREAT_GAME_RATING = 0.08;
 const lastKnownPremier = new Map<string, number>();
 
 // Bulk load all match history for a new player.
+//
+// We intentionally hit /v2/matches/{id} per match rather than trusting
+// the abbreviated stats returned by /v3/profile/matches — the history
+// endpoint only returns the target's team (3-5 players), so it can't
+// power /suspects opponent analysis. Costs 1 + N API calls per
+// backfill; one-time per new player and the watcher handles everything
+// else going forward.
 export async function backfillPlayer(steamId: string): Promise<number> {
   const stored = getStoredMatchCount(steamId);
   if (stored > 0) return stored;
@@ -43,12 +50,16 @@ export async function backfillPlayer(steamId: string): Promise<number> {
 
   try {
     const matches = await getMatchHistory(steamId);
+    let saved = 0;
     for (const match of matches) {
       try {
-        saveMatchDetails(match);
+        const full = await getMatchDetails(match.id);
+        saveMatchDetails(full);
         markMatchProcessed(match.id, steamId, match.finished_at);
+        saved++;
       } catch {
-        // Skip this match, continue with rest
+        // Per-match failure shouldn't abort the whole backfill — the
+        // watcher will retry on subsequent polls.
       }
     }
 
@@ -57,7 +68,7 @@ export async function backfillPlayer(steamId: string): Promise<number> {
       lastKnownPremier.set(steamId, profile.ranks.premier);
     }
 
-    return matches.length;
+    return saved;
   } catch (err) {
     if (err instanceof LeetifyNotFoundError) return 0;
     log.error({ steamId, err }, "Backfill failed");
