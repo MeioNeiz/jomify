@@ -1,6 +1,12 @@
+import type { ZodType } from "zod";
 import { config } from "../config.js";
 import log from "../logger.js";
 import { saveSnapshots, trackApiCall } from "../store.js";
+import {
+  leetifyMatchDetailsSchema,
+  leetifyMatchHistorySchema,
+  leetifyProfileSchema,
+} from "./schemas.js";
 import type { LeetifyMatchDetails, LeetifyProfile } from "./types.js";
 
 const BASE_URL = "https://api-public.cs-prod.leetify.com";
@@ -36,7 +42,12 @@ export class LeetifyUnavailableError extends Error {
 
 // ── Fetch with retries ──
 
-async function leetifyFetch<T>(path: string): Promise<T> {
+// We validate the shape at runtime via zod, but the declared return type T
+// comes from the caller's interface (LeetifyProfile, LeetifyMatchDetails…).
+// The schema's inferred output can differ slightly (passthrough adds an
+// index signature, tuples/arrays may vary) so we accept any ZodType and
+// let the caller assert T.
+async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
   checkCircuit();
   if (circuitOpen) throw new LeetifyUnavailableError();
 
@@ -65,7 +76,16 @@ async function leetifyFetch<T>(path: string): Promise<T> {
       throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
     }
 
-    return res.json() as Promise<T>;
+    const json = await res.json();
+    const parsed = schema.safeParse(json);
+    if (!parsed.success) {
+      log.warn(
+        { endpoint, issues: parsed.error.issues.slice(0, 5) },
+        "Leetify response failed schema validation",
+      );
+      throw new Error(`Leetify API: invalid response shape from ${endpoint}`);
+    }
+    return parsed.data as T;
   }
 
   tripCircuit();
@@ -76,7 +96,10 @@ async function leetifyFetch<T>(path: string): Promise<T> {
 // is written through so /stats, /compare, /leaderboard can serve stale
 // while revalidating.
 export async function getProfile(steamId: string): Promise<LeetifyProfile> {
-  const data = await leetifyFetch<LeetifyProfile>(`/v3/profile?steam64_id=${steamId}`);
+  const data = await leetifyFetch<LeetifyProfile>(
+    `/v3/profile?steam64_id=${steamId}`,
+    leetifyProfileSchema,
+  );
   saveSnapshots([
     {
       steamId: data.steam64_id,
@@ -93,9 +116,15 @@ export async function getProfile(steamId: string): Promise<LeetifyProfile> {
 }
 
 export async function getMatchHistory(steamId: string): Promise<LeetifyMatchDetails[]> {
-  return leetifyFetch<LeetifyMatchDetails[]>(`/v3/profile/matches?steam64_id=${steamId}`);
+  return leetifyFetch<LeetifyMatchDetails[]>(
+    `/v3/profile/matches?steam64_id=${steamId}`,
+    leetifyMatchHistorySchema,
+  );
 }
 
 export async function getMatchDetails(gameId: string): Promise<LeetifyMatchDetails> {
-  return leetifyFetch<LeetifyMatchDetails>(`/v2/matches/${gameId}`);
+  return leetifyFetch<LeetifyMatchDetails>(
+    `/v2/matches/${gameId}`,
+    leetifyMatchDetailsSchema,
+  );
 }

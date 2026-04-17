@@ -24,6 +24,10 @@ sqlite.run(`
   )
 `);
 sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_tracked_players_steam
+    ON tracked_players (steam_id)
+`);
+sqlite.run(`
   CREATE TABLE IF NOT EXISTS snapshots (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     steam_id      TEXT NOT NULL,

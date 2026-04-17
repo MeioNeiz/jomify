@@ -29,17 +29,19 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const results: string[] = [];
-  for (const id of ids) {
-    try {
+  const settled = await Promise.allSettled(
+    ids.map(async (id) => {
       const profile = await getProfile(id);
       addTrackedPlayer(guildId, id);
       const count = await backfillPlayer(id);
-      results.push(`\u2705 **${profile.name}** \u2014 ${count} matches loaded`);
-    } catch {
-      results.push(`\u274C \`${id}\` \u2014 not found on Leetify`);
-    }
-  }
+      return { name: profile.name, count };
+    }),
+  );
+  const results = settled.map((r, i) =>
+    r.status === "fulfilled"
+      ? `\u2705 **${r.value.name}** \u2014 ${r.value.count} matches loaded`
+      : `\u274C \`${ids[i]}\` \u2014 not found on Leetify`,
+  );
 
   await interaction.editReply(
     `**Imported ${ids.length} player(s):**\n${results.join("\n")}`,

@@ -19,7 +19,10 @@ export const trackedPlayers = sqliteTable(
     steamId: text("steam_id").notNull(),
     addedAt: text("added_at").notNull().default(now),
   },
-  (t) => [primaryKey({ columns: [t.guildId, t.steamId] })],
+  (t) => [
+    primaryKey({ columns: [t.guildId, t.steamId] }),
+    index("idx_tracked_players_steam").on(t.steamId),
+  ],
 );
 
 export const snapshots = sqliteTable(

@@ -89,14 +89,17 @@ export const execute = wrapCommand(async (interaction) => {
       );
       return;
     }
-    let total = 0;
     for (const { steamId } of linked) {
       addTrackedPlayer(guildId, steamId);
-      await backfillPlayer(steamId);
-      total++;
     }
+    const settled = await Promise.allSettled(
+      linked.map(({ steamId }) => backfillPlayer(steamId)),
+    );
+    const total = linked.length;
+    const failed = settled.filter((r) => r.status === "rejected").length;
+    const suffix = failed ? ` (${failed} failed to backfill)` : "";
     await interaction.editReply(
-      `Now tracking ${total} linked player(s). Match history loaded.`,
+      `Now tracking ${total} linked player(s). Match history loaded.${suffix}`,
     );
   } else {
     const players = getTrackedPlayers(guildId);
