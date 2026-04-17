@@ -1,6 +1,57 @@
 import { decodeLink } from "@csfloat/cs2-inspect-serializer";
+import { z } from "zod";
 import { config } from "./config.js";
 import log from "./logger.js";
+
+// ── Schemas for external API responses ──
+
+const usdRateSchema = z
+  .object({ rates: z.object({ GBP: z.number().optional() }).optional() })
+  .passthrough();
+
+const csfloatListingsSchema = z
+  .object({
+    data: z.array(z.object({ price: z.number() }).passthrough()).optional(),
+  })
+  .passthrough();
+
+const steamPriceSchema = z
+  .object({
+    lowest_price: z.string().optional(),
+    median_price: z.string().optional(),
+  })
+  .passthrough();
+
+const steamActionSchema = z
+  .object({ name: z.string().optional(), link: z.string().optional() })
+  .passthrough();
+
+const steamAssetSchema = z
+  .object({
+    assetid: z.string(),
+    classid: z.string(),
+    instanceid: z.string(),
+    amount: z.string(),
+  })
+  .passthrough();
+
+const steamDescSchema = z
+  .object({
+    classid: z.string(),
+    instanceid: z.string(),
+    market_hash_name: z.string(),
+    marketable: z.number(),
+    actions: z.array(steamActionSchema).optional(),
+  })
+  .passthrough();
+
+const steamInventorySchema = z
+  .object({
+    assets: z.array(steamAssetSchema),
+    descriptions: z.array(steamDescSchema),
+    total_inventory_count: z.number(),
+  })
+  .passthrough();
 
 export interface InventoryItem {
   name: string;
@@ -27,10 +78,15 @@ async function usdToGbp(): Promise<number> {
   if (rateCache && Date.now() - rateCache.at < RATE_TTL) return rateCache.gbp;
   try {
     const res = await fetch("https://open.er-api.com/v6/latest/USD");
-    const data = (await res.json()) as { rates?: { GBP?: number } };
-    if (data.rates?.GBP) {
-      rateCache = { gbp: data.rates.GBP, at: Date.now() };
-      return data.rates.GBP;
+    const parsed = usdRateSchema.safeParse(await res.json());
+    if (!parsed.success) {
+      log.warn(
+        { issues: parsed.error.issues.slice(0, 3) },
+        "USD→GBP rate: unexpected shape, using fallback",
+      );
+    } else if (parsed.data.rates?.GBP) {
+      rateCache = { gbp: parsed.data.rates.GBP, at: Date.now() };
+      return parsed.data.rates.GBP;
     }
   } catch (err) {
     log.warn({ err }, "USD→GBP rate fetch failed, using fallback");
@@ -63,8 +119,15 @@ async function fetchCsfloatPriceGbp(name: string, rate: number): Promise<number 
     log.debug({ status: res.status, name }, "CSFloat price lookup failed");
     return null;
   }
-  const data = (await res.json()) as { data?: Array<{ price: number }> };
-  const cents = data.data?.[0]?.price;
+  const parsed = csfloatListingsSchema.safeParse(await res.json());
+  if (!parsed.success) {
+    log.debug(
+      { name, issues: parsed.error.issues.slice(0, 3) },
+      "CSFloat response shape invalid",
+    );
+    return null;
+  }
+  const cents = parsed.data.data?.[0]?.price;
   if (cents == null) return null;
   return (cents / 100) * rate;
 }
@@ -76,11 +139,9 @@ async function fetchSteamPriceGbp(name: string): Promise<number | null> {
       `&market_hash_name=${encodeURIComponent(name)}`,
   );
   if (!res.ok) return null;
-  const data = (await res.json()) as {
-    lowest_price?: string;
-    median_price?: string;
-  };
-  const s = data.lowest_price ?? data.median_price;
+  const parsed = steamPriceSchema.safeParse(await res.json());
+  if (!parsed.success) return null;
+  const s = parsed.data.lowest_price ?? parsed.data.median_price;
   if (!s) return null;
   const n = parseFloat(s.replace(/[^0-9.]/g, ""));
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -121,25 +182,7 @@ function safeDecode(url: string | null): { float: number | null; seed: number | 
 
 // ── Inventory fetch ──
 
-type SteamAction = { name?: string; link?: string };
-type SteamAsset = {
-  assetid: string;
-  classid: string;
-  instanceid: string;
-  amount: string;
-};
-type SteamDesc = {
-  classid: string;
-  instanceid: string;
-  market_hash_name: string;
-  marketable: number;
-  actions?: SteamAction[];
-};
-type SteamInventory = {
-  assets: SteamAsset[];
-  descriptions: SteamDesc[];
-  total_inventory_count: number;
-};
+type SteamDesc = z.infer<typeof steamDescSchema>;
 
 export async function fetchInventorySummary(
   steamId: string,
@@ -150,7 +193,15 @@ export async function fetchInventorySummary(
   if (res.status === 403) return "private";
   if (!res.ok) return "error";
 
-  const inv = (await res.json()) as SteamInventory;
+  const parsedInv = steamInventorySchema.safeParse(await res.json());
+  if (!parsedInv.success) {
+    log.warn(
+      { steamId, issues: parsedInv.error.issues.slice(0, 3) },
+      "Steam inventory response shape invalid",
+    );
+    return "error";
+  }
+  const inv = parsedInv.data;
 
   const descMap = new Map<string, SteamDesc>();
   for (const d of inv.descriptions) descMap.set(`${d.classid}_${d.instanceid}`, d);

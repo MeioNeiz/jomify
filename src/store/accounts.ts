@@ -9,35 +9,37 @@ export type LinkResult = {
 
 /** Always links, overwriting any prior link on either side. */
 export function linkAccount(discordId: string, steamId: string): LinkResult {
-  const prevForDiscord = db
-    .select({ steamId: linkedAccounts.steamId })
-    .from(linkedAccounts)
-    .where(eq(linkedAccounts.discordId, discordId))
-    .get();
+  return db.transaction((tx) => {
+    const prevForDiscord = tx
+      .select({ steamId: linkedAccounts.steamId })
+      .from(linkedAccounts)
+      .where(eq(linkedAccounts.discordId, discordId))
+      .get();
 
-  const prevForSteam = db
-    .select({ discordId: linkedAccounts.discordId })
-    .from(linkedAccounts)
-    .where(eq(linkedAccounts.steamId, steamId))
-    .get();
+    const prevForSteam = tx
+      .select({ discordId: linkedAccounts.discordId })
+      .from(linkedAccounts)
+      .where(eq(linkedAccounts.steamId, steamId))
+      .get();
 
-  db.delete(linkedAccounts)
-    .where(
-      or(eq(linkedAccounts.discordId, discordId), eq(linkedAccounts.steamId, steamId)),
-    )
-    .run();
-  db.insert(linkedAccounts).values({ discordId, steamId }).run();
+    tx.delete(linkedAccounts)
+      .where(
+        or(eq(linkedAccounts.discordId, discordId), eq(linkedAccounts.steamId, steamId)),
+      )
+      .run();
+    tx.insert(linkedAccounts).values({ discordId, steamId }).run();
 
-  return {
-    previousSteamId:
-      prevForDiscord && prevForDiscord.steamId !== steamId
-        ? prevForDiscord.steamId
-        : null,
-    previousDiscordId:
-      prevForSteam && prevForSteam.discordId !== discordId
-        ? prevForSteam.discordId
-        : null,
-  };
+    return {
+      previousSteamId:
+        prevForDiscord && prevForDiscord.steamId !== steamId
+          ? prevForDiscord.steamId
+          : null,
+      previousDiscordId:
+        prevForSteam && prevForSteam.discordId !== discordId
+          ? prevForSteam.discordId
+          : null,
+    };
+  });
 }
 
 export function getSteamId(discordId: string): string | null {

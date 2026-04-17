@@ -9,7 +9,7 @@ export interface PlayerStreak {
   lastAlertedCount: number;
 }
 
-const nowExpr = sql`datetime('now')`;
+const nowExpr = sql<string>`datetime('now')`;
 
 export function getPlayerStreak(steamId: string): PlayerStreak | null {
   const row = db
@@ -39,7 +39,6 @@ export function updatePlayerStreak(
         streakType: "win",
         streakCount: 0,
         lastAlertedCount: 0,
-        updatedAt: nowExpr as unknown as string,
       })
       .onConflictDoUpdate({
         target: playerStreaks.steamId,
@@ -47,7 +46,7 @@ export function updatePlayerStreak(
           streakType: "win",
           streakCount: 0,
           lastAlertedCount: 0,
-          updatedAt: nowExpr as unknown as string,
+          updatedAt: nowExpr,
         },
       })
       .run();
@@ -65,7 +64,6 @@ export function updatePlayerStreak(
       streakType: outcome,
       streakCount: newCount,
       lastAlertedCount: lastAlerted,
-      updatedAt: nowExpr as unknown as string,
     })
     .onConflictDoUpdate({
       target: playerStreaks.steamId,
@@ -73,7 +71,7 @@ export function updatePlayerStreak(
         streakType: outcome,
         streakCount: newCount,
         lastAlertedCount: lastAlerted,
-        updatedAt: nowExpr as unknown as string,
+        updatedAt: nowExpr,
       },
     })
     .run();
