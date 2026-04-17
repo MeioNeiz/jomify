@@ -47,6 +47,44 @@ export function saveLeaderboardSnapshot(
   });
 }
 
+/**
+ * Returns the leaderboard snapshot strictly before the supplied cutoff.
+ * Used by /leaderboard so the cached render can still show rank arrows
+ * (compare cached-snapshot to the one before it) when Leetify is down.
+ */
+export function getLeaderboardBefore(
+  guildId: string,
+  cutoff: string,
+): { steamId: string; premier: number | null }[] {
+  const prev = db
+    .select({ recordedAt: leaderboardSnapshots.recordedAt })
+    .from(leaderboardSnapshots)
+    .where(
+      and(
+        eq(leaderboardSnapshots.guildId, guildId),
+        sql`${leaderboardSnapshots.recordedAt} < ${cutoff}`,
+      ),
+    )
+    .orderBy(desc(leaderboardSnapshots.recordedAt))
+    .limit(1)
+    .get();
+  if (!prev) return [];
+
+  return db
+    .select({
+      steamId: leaderboardSnapshots.steamId,
+      premier: leaderboardSnapshots.premier,
+    })
+    .from(leaderboardSnapshots)
+    .where(
+      and(
+        eq(leaderboardSnapshots.guildId, guildId),
+        eq(leaderboardSnapshots.recordedAt, prev.recordedAt),
+      ),
+    )
+    .all();
+}
+
 export function getLastLeaderboard(
   guildId: string,
 ): { steamId: string; premier: number | null }[] {

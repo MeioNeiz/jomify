@@ -29,6 +29,7 @@ export {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
   getLatestSnapshot,
+  getLeaderboardBefore,
   getWeekAgoLeaderboard,
   type PlayerSnapshot,
   saveLeaderboardSnapshot,

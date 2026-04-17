@@ -8,6 +8,7 @@ import {
   clearLeetifyUnknown,
   getDiscordId,
   getLastLeaderboard,
+  getLeaderboardBefore,
   getNotifyChannel,
   getSteamId,
   getTrackedPlayers,
@@ -134,6 +135,33 @@ describe("leaderboard snapshots", () => {
     const result = getLastLeaderboard(GUILD);
     expect(result).toHaveLength(2);
     expect(result.find((r) => r.steamId === STEAM)?.premier).toBe(15000);
+  });
+
+  test("getLeaderboardBefore returns the snapshot prior to cutoff", () => {
+    // Three historical snapshots via raw SQL so we control recorded_at.
+    db.run(
+      "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
+      [GUILD, STEAM, 14000, "2026-04-15 10:00:00"],
+    );
+    db.run(
+      "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
+      [GUILD, STEAM, 14500, "2026-04-16 10:00:00"],
+    );
+    db.run(
+      "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
+      [GUILD, STEAM, 15000, "2026-04-17 10:00:00"],
+    );
+    const prev = getLeaderboardBefore(GUILD, "2026-04-17 10:00:00");
+    expect(prev).toHaveLength(1);
+    expect(prev[0].premier).toBe(14500);
+  });
+
+  test("getLeaderboardBefore returns empty when no earlier snapshot exists", () => {
+    db.run(
+      "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
+      [GUILD, STEAM, 14000, "2026-04-17 10:00:00"],
+    );
+    expect(getLeaderboardBefore(GUILD, "2026-04-17 10:00:00")).toEqual([]);
   });
 });
 
