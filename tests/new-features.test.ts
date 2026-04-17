@@ -15,6 +15,8 @@ import {
   getStoredMatchCount,
   getTeamMapStats,
   getWeekAgoLeaderboard,
+  hasMatchStats,
+  isMatchProcessed,
   isOpponentAnalysed,
   linkAccount,
   markMatchProcessed,
@@ -443,6 +445,44 @@ describe("backfill checks match_stats not processed", () => {
     markMatchProcessed("orphan-2", STEAM1, "2026-01-01");
     expect(getProcessedMatchCount(STEAM1)).toBe(2);
     expect(getStoredMatchCount(STEAM1)).toBe(0);
+  });
+});
+
+describe("hasMatchStats — detail-save marker (independent of isMatchProcessed)", () => {
+  test("false before saveMatchDetails", () => {
+    expect(hasMatchStats("m1", STEAM1)).toBe(false);
+  });
+
+  test("true after saveMatchDetails for each player in the match", () => {
+    saveMatchDetails(
+      makeMatch("m1", "de_dust2", 13, 7, [
+        { steamId: STEAM1, team: 2, kills: 10, deaths: 10 },
+        { steamId: STEAM2, team: 2, kills: 10, deaths: 10 },
+      ]),
+    );
+    expect(hasMatchStats("m1", STEAM1)).toBe(true);
+    expect(hasMatchStats("m1", STEAM2)).toBe(true);
+  });
+
+  test("is scoped per (match, player) — other matches stay false", () => {
+    saveMatchDetails(
+      makeMatch("m1", "de_dust2", 13, 7, [
+        { steamId: STEAM1, team: 2, kills: 10, deaths: 10 },
+      ]),
+    );
+    expect(hasMatchStats("m1", STEAM1)).toBe(true);
+    expect(hasMatchStats("m1", STEAM2)).toBe(false);
+    expect(hasMatchStats("m2", STEAM1)).toBe(false);
+  });
+
+  test("isMatchProcessed and hasMatchStats are independent", () => {
+    // Simulate the old bug: a match got marked processed but details
+    // never saved (transient Leetify failure swallowed in the
+    // try/catch). The fixed watcher retries when hasMatchStats is
+    // false, regardless of isMatchProcessed.
+    markMatchProcessed("stuck", STEAM1, "2026-01-01");
+    expect(isMatchProcessed("stuck", STEAM1)).toBe(true);
+    expect(hasMatchStats("stuck", STEAM1)).toBe(false);
   });
 });
 

@@ -76,7 +76,14 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
   }
 
   const compute = (): CarryView => ({
-    rows: getTeamCarryStats(steamIds).filter((r) => r.sharedMatches >= 3),
+    // Sort ranking only surfaces net carriers — negative scores mean
+    // the player drags their teammates down on balance, which isn't
+    // really "who carries" info worth highlighting.
+    rows: getTeamCarryStats(steamIds).filter(
+      (r) =>
+        r.sharedMatches >= 3 &&
+        (r.premierSamples > 0 ? r.premierScore : r.proxyScore) > 0,
+    ),
     latest: getMostRecentMatchTime(steamIds),
   });
 

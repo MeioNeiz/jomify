@@ -20,6 +20,7 @@ import {
   getAllTrackedSteamIds,
   getPlayerStatAverages,
   getStoredMatchCount,
+  hasMatchStats,
   isLeetifyUnknown,
   isMatchProcessed,
   markMatchProcessed,
@@ -102,31 +103,35 @@ async function checkPlayer(client: Client, steamId: string) {
     lastKnownPremier.set(steamId, currentPremier);
   }
 
-  // Check recent matches for new ones
+  // Check recent matches for new ones. Detail-fetch and alerts are
+  // now tracked separately: we retry getMatchDetails until match_stats
+  // is populated (so transient Leetify failures don't permanently black
+  // -hole a match), but alerts fire at most once per match.
   for (const match of profile.recent_matches ?? []) {
-    if (isMatchProcessed(match.id, steamId)) {
-      continue;
-    }
+    const alertsSent = isMatchProcessed(match.id, steamId);
+    const detailsSaved = hasMatchStats(match.id, steamId);
 
-    markMatchProcessed(match.id, steamId, match.finished_at);
-
-    // Fetch and store full match details
     let details: LeetifyMatchDetails | null = null;
-    try {
-      details = await getMatchDetails(match.id);
-      saveMatchDetails(details);
-      // Stamp the per-match Premier snapshot so /carry can compute rating
-      // deltas. Premier ratings are 4-5 digits; competitive ranks are 1-18.
-      // Leetify's `rank_type` is now an opaque numeric enum so we just
-      // gate on the magnitude of `rank` itself.
-      const rank =
-        typeof match.rank === "number" && match.rank >= 1000
-          ? match.rank
-          : currentPremier;
-      if (rank != null) recordPremierAfter(match.id, steamId, rank);
-    } catch (err) {
-      log.warn({ matchId: match.id, err }, "Failed to fetch match");
+    if (!detailsSaved) {
+      try {
+        details = await getMatchDetails(match.id);
+        saveMatchDetails(details);
+        // Stamp the per-match Premier snapshot so /carry can compute rating
+        // deltas. Premier ratings are 4-5 digits; competitive ranks are 1-18.
+        // Leetify's `rank_type` is now an opaque numeric enum so we just
+        // gate on the magnitude of `rank` itself.
+        const rank =
+          typeof match.rank === "number" && match.rank >= 1000
+            ? match.rank
+            : currentPremier;
+        if (rank != null) recordPremierAfter(match.id, steamId, rank);
+      } catch (err) {
+        log.warn({ matchId: match.id, err }, "Failed to fetch match");
+      }
     }
+
+    if (alertsSent) continue;
+    markMatchProcessed(match.id, steamId, match.finished_at);
 
     const avgs = getPlayerStatAverages(steamId);
 
