@@ -1,0 +1,10 @@
+[Unit]
+Description=Jomify daily DB backup to GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opc
+WorkingDirectory=/home/opc/jomify
+ExecStart=/bin/bash /home/opc/jomify/scripts/backup.sh
