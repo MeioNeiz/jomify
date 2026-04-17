@@ -1,5 +1,6 @@
 import { Client, Collection, Events, GatewayIntentBits } from "discord.js";
 import { type Command, commands } from "./commands/index.js";
+import { dispatchComponent } from "./components.js";
 import { config } from "./config.js";
 import log from "./logger.js";
 import { startWatcher } from "./watcher.js";
@@ -23,6 +24,10 @@ client.once(Events.ClientReady, (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    await dispatchComponent(interaction);
+    return;
+  }
   if (!interaction.isChatInputCommand()) return;
   const command = commandMap.get(interaction.commandName);
   if (!command) return;

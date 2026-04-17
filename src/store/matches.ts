@@ -323,7 +323,11 @@ export interface HistoryRow {
  * Premier delta (premier_after − prev premier_after). null when either
  * end is missing (e.g. first tracked match).
  */
-export function getPlayerHistory(steamId: string, limit: number): HistoryRow[] {
+export function getPlayerHistory(
+  steamId: string,
+  limit: number,
+  offset = 0,
+): HistoryRow[] {
   return sqlite
     .query(
       `SELECT * FROM (
@@ -348,9 +352,9 @@ export function getPlayerHistory(steamId: string, limit: number): HistoryRow[] {
          WHERE ms.steam_id = ?
        )
        ORDER BY finishedAt DESC
-       LIMIT ?`,
+       LIMIT ? OFFSET ?`,
     )
-    .all(steamId, limit) as HistoryRow[];
+    .all(steamId, limit, offset) as HistoryRow[];
 }
 
 /**
