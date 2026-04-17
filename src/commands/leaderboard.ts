@@ -3,10 +3,11 @@ import { fetchGuildProfiles, freshnessSuffix } from "../helpers.js";
 import {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
+  getLeaderboardBefore,
   getTrackedPlayers,
   saveLeaderboardSnapshot,
 } from "../store.js";
-import { embed, rankPrefix } from "../ui.js";
+import { embed, pad, rankPrefix, table } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -14,35 +15,44 @@ export const data = new SlashCommandBuilder()
   .setDescription("Rank tracked players by Premier rating");
 
 type Entry = { steamId: string; name: string; premier: number };
+type Prev = { steamId: string; premier: number | null };
 
-function buildLines(
-  entries: Entry[],
-  prevMap: Map<string, number | null>,
-  prevOrder: string[],
-) {
+const NAME_WIDTH = 18;
+const RATING_WIDTH = 7;
+const DELTA_WIDTH = 6;
+
+function buildRows(entries: Entry[], prev: Prev[]): string[] {
+  const prevMap = new Map(prev.map((e) => [e.steamId, e.premier]));
+  const prevOrder = [...prev]
+    .sort((a, b) => (b.premier ?? 0) - (a.premier ?? 0))
+    .map((e) => e.steamId);
+
   return entries.map((e, i) => {
-    const prefix = rankPrefix(i);
     const rating = e.premier ? e.premier.toLocaleString() : "Unranked";
 
-    let change = "";
-    const prev = prevMap.get(e.steamId);
-    if (prev != null && e.premier) {
-      const diff = e.premier - prev;
-      if (diff > 0) change = ` (+${diff})`;
-      else if (diff < 0) change = ` (${diff})`;
+    const prevRating = prevMap.get(e.steamId);
+    let delta = "";
+    if (prevRating != null && e.premier) {
+      const diff = e.premier - prevRating;
+      if (diff > 0) delta = `+${diff}`;
+      else if (diff < 0) delta = `${diff}`;
     }
 
-    let posChange = "";
+    let move = "";
     if (prevOrder.length) {
       const oldPos = prevOrder.indexOf(e.steamId);
       if (oldPos !== -1 && oldPos !== i) {
-        const moved = oldPos - i;
-        posChange =
-          moved > 0 ? ` \u2B06\uFE0F${moved}` : ` \u2B07\uFE0F${Math.abs(moved)}`;
+        const steps = oldPos - i;
+        move = steps > 0 ? `\u2B06 ${steps}` : `\u2B07 ${Math.abs(steps)}`;
       }
     }
 
-    return `${prefix} **${e.name}** ${rating}${change}${posChange}`;
+    return (
+      `${rankPrefix(i)} ${pad(e.name, NAME_WIDTH)}` +
+      `${pad(rating, RATING_WIDTH)}` +
+      `${pad(delta, DELTA_WIDTH)}` +
+      `${move}`
+    );
   });
 }
 
@@ -59,10 +69,7 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  type View = {
-    entries: Entry[];
-    prev: { steamId: string; premier: number | null }[];
-  };
+  type View = { entries: Entry[]; prev: Prev[] };
 
   await respondWithRevalidate<View>(interaction, {
     fetchCached: () => {
@@ -75,11 +82,16 @@ export const execute = wrapCommand(async (interaction) => {
           premier: e.premier ?? 0,
         }))
         .sort((a, b) => b.premier - a.premier);
-      return { data: { entries, prev: [] }, snapshotAt: cached.recordedAt };
+      // Compare the cached snapshot to the one before it so rank arrows
+      // still render when Leetify is down.
+      const prev = cached.recordedAt
+        ? getLeaderboardBefore(guildId, cached.recordedAt)
+        : [];
+      return { data: { entries, prev }, snapshotAt: cached.recordedAt };
     },
     fetchFresh: async () => {
-      // Snapshot the "previous" leaderboard *before* we save the new one,
-      // otherwise the position arrows would compare against ourselves.
+      // Snapshot the previous leaderboard *before* we save the new one,
+      // otherwise arrows would compare against ourselves.
       const prev = getLastLeaderboard(guildId);
       const profiles = await fetchGuildProfiles(guildId);
       const entries: Entry[] = (profiles ?? [])
@@ -96,14 +108,9 @@ export const execute = wrapCommand(async (interaction) => {
       return { entries, prev };
     },
     render: (v, { cached, snapshotAt }) => {
-      const prevMap = new Map(v.prev.map((e) => [e.steamId, e.premier]));
-      const prevOrder = [...v.prev]
-        .sort((a, b) => (b.premier ?? 0) - (a.premier ?? 0))
-        .map((e) => e.steamId);
-      const lines = buildLines(v.entries, prevMap, prevOrder);
-      const desc = cached
-        ? lines.join("\n") + freshnessSuffix(snapshotAt, "snapshot from")
-        : lines.join("\n");
+      const rows = buildRows(v.entries, v.prev);
+      const desc =
+        table(rows) + (cached ? freshnessSuffix(snapshotAt, "snapshot from") : "");
       return { embeds: [embed().setTitle("Leaderboard").setDescription(desc)] };
     },
     missingMessage:
