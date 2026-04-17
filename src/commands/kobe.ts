@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder } from "discord.js";
 import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import {
@@ -6,6 +6,7 @@ import {
   getPlayerMatchStats,
   getPlayerStatAverages,
 } from "../store.js";
+import { embed, pad, table } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -58,31 +59,30 @@ export const execute = wrapCommand(async (interaction) => {
       return computeView(steamIds);
     },
     render: ({ entries, latest }) => {
-      const lines = entries.map((e, i) => {
-        const ff =
-          e.heFriendsDamage > 1
-            ? ` \u2022 friendly fire \`${e.heFriendsDamage.toFixed(1)}\``
-            : "";
+      const top = entries.slice(0, 10);
+      // Use plain numeric prefix (not rankPrefix medals) because the table
+      // runs up to 10 rows and mixing emoji medals with plain numbers
+      // misaligns the columns in a code block.
+      const rows = top.map((e, i) => {
+        const prefix = pad(`${i + 1}.`, 3);
+        const ff = e.heFriendsDamage > 1 ? `  FF ${e.heFriendsDamage.toFixed(1)}` : "";
         return (
-          `${i + 1}. **${e.name}** \u2014 ` +
-          `\u{1F4A5} \`${e.heDamage.toFixed(1)}\` HE dmg` +
-          ` \u2022 \u{1F9EA} \`${e.heThrown.toFixed(1)}\`` +
-          ` \u2022 \u{1F525} \`${e.mollies.toFixed(1)}\`` +
-          ` \u2022 \u{1F4A8} \`${e.smokes.toFixed(1)}\`` +
+          `${prefix}${pad(e.name, 16)} ` +
+          `HE ${pad(e.heDamage.toFixed(1), 5)} ` +
+          `thrown ${pad(e.heThrown.toFixed(1), 4)} ` +
+          `moly ${pad(e.mollies.toFixed(1), 4)} ` +
+          `smk ${e.smokes.toFixed(1)}` +
           ff
         );
       });
-      const embed = new EmbedBuilder()
-        .setTitle("Grenade Mastery (last 30)")
-        .setColor(0xff9933)
+      const header =
+        "Per-match averages. HE = damage dealt to enemies. FF = friendly-fire damage.";
+      const e = embed("kobe")
+        .setTitle("Grenade Mastery (Last 30)")
         .setDescription(
-          "Per-match averages \u2014 " +
-            "\u{1F4A5} HE damage to enemies | " +
-            "\u{1F9EA} HEs | \u{1F525} mollies | \u{1F4A8} smokes\n\n" +
-            lines.join("\n") +
-            freshnessSuffix(latest, "last match"),
+          `${header}\n${table(rows)}${freshnessSuffix(latest, "last match")}`,
         );
-      return { embeds: [embed] };
+      return { embeds: [e] };
     },
     missingMessage: "No match data yet.",
   });

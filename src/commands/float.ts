@@ -1,6 +1,6 @@
 import { decodeLink } from "@csfloat/cs2-inspect-serializer";
 import { SlashCommandBuilder } from "discord.js";
-import { leetifyEmbed } from "../helpers.js";
+import { embed } from "../ui.js";
 import { wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -48,51 +48,62 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const lines: string[] = [];
+  const e = embed().setTitle("Inspect");
 
   if (decoded.paintwear != null) {
-    lines.push(
-      `**Float**: \`${decoded.paintwear.toFixed(10)}\` (${wearName(decoded.paintwear)})`,
-    );
+    e.addFields({
+      name: "Float",
+      value: `\`${decoded.paintwear.toFixed(10)}\` (${wearName(decoded.paintwear)})`,
+      inline: true,
+    });
   }
   if (decoded.paintseed != null) {
-    lines.push(`**Paint seed**: \`#${decoded.paintseed}\``);
+    e.addFields({
+      name: "Paint Seed",
+      value: `\`#${decoded.paintseed}\``,
+      inline: true,
+    });
   }
   if (decoded.rarity != null) {
-    const q = decoded.quality != null ? ` \u2022 **Quality**: ${decoded.quality}` : "";
-    lines.push(`**Rarity**: ${RARITY[decoded.rarity] ?? `tier ${decoded.rarity}`}${q}`);
+    e.addFields({
+      name: "Rarity",
+      value: RARITY[decoded.rarity] ?? `tier ${decoded.rarity}`,
+      inline: true,
+    });
+  }
+  if (decoded.quality != null) {
+    e.addFields({ name: "Quality", value: `${decoded.quality}`, inline: true });
   }
   if (decoded.defindex != null || decoded.paintindex != null) {
-    lines.push(
-      `**defindex**: \`${decoded.defindex ?? "?"}\` \u2022 ` +
-        `**paintindex**: \`${decoded.paintindex ?? "?"}\``,
-    );
+    e.addFields({
+      name: "Indices",
+      value:
+        `defindex \`${decoded.defindex ?? "?"}\`\n` +
+        `paintindex \`${decoded.paintindex ?? "?"}\``,
+      inline: true,
+    });
   }
 
   if (decoded.stickers.length) {
     const s = decoded.stickers
       .map((x) => {
         const wearStr = x.wear != null ? ` (${(x.wear * 100).toFixed(0)}% worn)` : "";
-        return `\u2022 sticker \`#${x.stickerId ?? "?"}\` slot ${x.slot ?? "?"}${wearStr}`;
+        return `- sticker \`#${x.stickerId ?? "?"}\` slot ${x.slot ?? "?"}${wearStr}`;
       })
       .join("\n");
-    lines.push(`\n**Stickers**:\n${s}`);
+    e.addFields({ name: "Stickers", value: s, inline: false });
   }
 
   if (decoded.keychains.length) {
     const k = decoded.keychains
-      .map(
-        (x) => `\u2022 keychain \`#${x.stickerId ?? "?"}\` pattern ${x.pattern ?? "?"}`,
-      )
+      .map((x) => `- keychain \`#${x.stickerId ?? "?"}\` pattern ${x.pattern ?? "?"}`)
       .join("\n");
-    lines.push(`\n**Keychains**:\n${k}`);
+    e.addFields({ name: "Keychains", value: k, inline: false });
   }
 
-  if (!lines.length) {
-    lines.push("No decodable fields in that link.");
+  if (!e.data.fields?.length) {
+    e.setDescription("No decodable fields in that link.");
   }
 
-  await interaction.editReply({
-    embeds: [leetifyEmbed("Inspect").setDescription(lines.join("\n"))],
-  });
+  await interaction.editReply({ embeds: [e] });
 });

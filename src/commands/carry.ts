@@ -1,7 +1,8 @@
 import { SlashCommandBuilder } from "discord.js";
-import { freshnessSuffix, leetifyEmbed, signed } from "../helpers.js";
+import { freshnessSuffix, signed } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import { type CarryRow, getCarryStats, getMostRecentMatchTime } from "../store.js";
+import { embed, rankPrefix } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -37,9 +38,9 @@ function formatRow(r: CarryRow, i: number): string {
       : `**${signedProxy(r.proxyScore)}** carry score`;
   const note =
     r.premierSamples > 0 && r.premierSamples < r.sharedMatches
-      ? ` (${r.premierSamples}/${r.sharedMatches} with rating data)`
-      : ` (${r.sharedMatches} games)`;
-  return `${i + 1}. **${r.teammateName}** \u2014 ${main}${note}`;
+      ? `${r.premierSamples}/${r.sharedMatches} with rating data`
+      : `${r.sharedMatches} games`;
+  return `${rankPrefix(i)} **${r.teammateName}** ${main} (${note})`;
 }
 
 function signedProxy(n: number): string {
@@ -63,10 +64,10 @@ export const execute = wrapCommand(async (interaction) => {
     },
     render: ({ rows, latest }) => {
       const body = rows.map((r, i) => formatRow(r, i)).join("\n");
-      const embed = leetifyEmbed(`${resolved.label} \u2014 Who Carries?`).setDescription(
-        body + freshnessSuffix(latest, "last match"),
-      );
-      return { embeds: [embed] };
+      const e = embed()
+        .setTitle(`Who Carries ${resolved.label}?`)
+        .setDescription(body + freshnessSuffix(latest, "last match"));
+      return { embeds: [e] };
     },
     missingMessage: `Need at least ${MIN_SHARED} shared matches with a teammate. Play more together.`,
   });

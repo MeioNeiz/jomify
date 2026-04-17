@@ -1,12 +1,8 @@
 import { SlashCommandBuilder } from "discord.js";
-import {
-  freshnessSuffix,
-  leetifyEmbed,
-  requireTrackedGuild,
-  signed,
-} from "../helpers.js";
+import { freshnessSuffix, requireTrackedGuild, signed } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import { getMostRecentMatchTime, getTeamCarryStats, getTeamMapStats } from "../store.js";
+import { embed, rankPrefix } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 import { formatMapLines, MIN_MATCHES } from "./maps.js";
 
@@ -55,7 +51,7 @@ async function teamMaps(interaction: import("discord.js").ChatInputCommandIntera
     return;
   }
   await interaction.editReply({
-    embeds: [leetifyEmbed("Team Map Win Rates").setDescription(lines)],
+    embeds: [embed().setTitle("Team Map Win Rates").setDescription(lines)],
   });
 }
 
@@ -104,15 +100,15 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
             ? `**${signed(r.premierScore)}** Premier`
             : `**${r.proxyScore.toFixed(2)}** carry score`;
         return (
-          `${i + 1}. **${r.name}** \u2014 ${main} ` +
+          `${rankPrefix(i)} **${r.name}** ${main} ` +
           `(${r.sharedMatches} games, ${r.partnerCount} teammates)`
         );
       });
 
-      const embed = leetifyEmbed("Team Carry Rankings").setDescription(
-        lines.join("\n") + freshnessSuffix(latest, "last match"),
-      );
-      return { embeds: [embed] };
+      const e = embed()
+        .setTitle("Team Carry Rankings")
+        .setDescription(lines.join("\n") + freshnessSuffix(latest, "last match"));
+      return { embeds: [e] };
     },
     missingMessage: "Not enough shared matches yet to rank carries (need 3+ per pair).",
   });

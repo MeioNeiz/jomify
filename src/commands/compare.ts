@@ -1,5 +1,5 @@
 import { type EmbedBuilder, SlashCommandBuilder } from "discord.js";
-import { fmt, freshnessSuffix, leetifyEmbed } from "../helpers.js";
+import { fmt, freshnessSuffix } from "../helpers.js";
 import { getProfile } from "../leetify/client.js";
 import type { LeetifyProfile } from "../leetify/types.js";
 import {
@@ -10,6 +10,7 @@ import {
   getSteamId,
   type PlayerAverages,
 } from "../store.js";
+import { embed } from "../ui.js";
 import { respondWithRevalidate } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -49,48 +50,73 @@ function bold(
   return [s1, s2];
 }
 
-// ── Default: brief overview ──
+// Each comparison row produces a pair of side-by-side inline fields so the
+// two players render as aligned columns in Discord's embed layout.
+type CompareRow = {
+  label: string;
+  v1: number | null | undefined;
+  v2: number | null | undefined;
+  dec?: number;
+  higherIsBetter?: boolean;
+};
 
-// ── Focus: detailed views ──
-
-function ratingsDetail(p1: LeetifyProfile, p2: LeetifyProfile): EmbedBuilder {
-  const pairs: [string, number?, number?][] = [
-    ["Leetify", p1.ranks?.leetify ?? undefined, p2.ranks?.leetify ?? undefined],
-    ["Aim", p1.rating.aim, p2.rating.aim],
-    ["Positioning", p1.rating.positioning, p2.rating.positioning],
-    ["Utility", p1.rating.utility, p2.rating.utility],
-    ["Clutch", p1.rating.clutch, p2.rating.clutch],
-    ["Opening", p1.rating.opening, p2.rating.opening],
-  ];
-
-  const lines = pairs.map(([label, v1, v2]) => {
-    const [s1, s2] = bold(v1, v2);
-    return `${label}: ${s1} vs ${s2}`;
-  });
-
-  return leetifyEmbed(`${p1.name} vs ${p2.name} \u2014 Ratings`).setDescription(
-    lines.join("\n"),
-  );
+function buildComparisonEmbed(
+  title: string,
+  p1Name: string,
+  p2Name: string,
+  rows: CompareRow[],
+): EmbedBuilder {
+  // Stack values as one multi-line field per player so they sit side by side.
+  const labels: string[] = [];
+  const col1: string[] = [];
+  const col2: string[] = [];
+  for (const r of rows) {
+    const [s1, s2] = bold(r.v1, r.v2, r.dec ?? 1, r.higherIsBetter ?? true);
+    labels.push(r.label);
+    col1.push(s1);
+    col2.push(s2);
+  }
+  const rowLabel = labels.map((l) => `**${l}**`).join("\n");
+  return embed()
+    .setTitle(title)
+    .addFields(
+      { name: "Stat", value: rowLabel, inline: true },
+      { name: p1Name, value: col1.join("\n"), inline: true },
+      { name: p2Name, value: col2.join("\n"), inline: true },
+    );
 }
 
-type Row = {
-  label: string;
-  key: keyof PlayerAverages;
-  dec: number;
-  higherIsBetter: boolean;
-};
+function ratingsDetail(p1: LeetifyProfile, p2: LeetifyProfile): EmbedBuilder {
+  return buildComparisonEmbed(`${p1.name} vs ${p2.name}: Ratings`, p1.name, p2.name, [
+    { label: "Leetify", v1: p1.ranks?.leetify, v2: p2.ranks?.leetify },
+    { label: "Aim", v1: p1.rating.aim, v2: p2.rating.aim },
+    { label: "Positioning", v1: p1.rating.positioning, v2: p2.rating.positioning },
+    { label: "Utility", v1: p1.rating.utility, v2: p2.rating.utility },
+    { label: "Clutch", v1: p1.rating.clutch, v2: p2.rating.clutch },
+    { label: "Opening", v1: p1.rating.opening, v2: p2.rating.opening },
+  ]);
+}
 
 function averagesEmbed(
   title: string,
-  rows: Row[],
+  p1Name: string,
+  p2Name: string,
+  rows: (Omit<CompareRow, "v1" | "v2"> & { key: keyof PlayerAverages })[],
   a1: PlayerAverages,
   a2: PlayerAverages,
 ): EmbedBuilder {
-  const lines = rows.map(({ label, key, dec, higherIsBetter }) => {
-    const [s1, s2] = bold(a1[key], a2[key], dec, higherIsBetter);
-    return `${label}: ${s1} vs ${s2}`;
-  });
-  return leetifyEmbed(title).setDescription(lines.join("\n"));
+  return buildComparisonEmbed(
+    title,
+    p1Name,
+    p2Name,
+    rows.map((r) => ({
+      label: r.label,
+      v1: a1[r.key],
+      v2: a2[r.key],
+      dec: r.dec,
+      higherIsBetter: r.higherIsBetter,
+    })),
+  );
 }
 
 function combatDetail(
@@ -100,11 +126,13 @@ function combatDetail(
   a2: PlayerAverages,
 ): EmbedBuilder {
   return averagesEmbed(
-    `${p1Name} vs ${p2Name} \u2014 Combat (last 30)`,
+    `${p1Name} vs ${p2Name}: Combat (Last 30)`,
+    p1Name,
+    p2Name,
     [
       { label: "Kills", key: "avg_kills", dec: 1, higherIsBetter: true },
       { label: "Deaths", key: "avg_deaths", dec: 1, higherIsBetter: false },
-      { label: "KD", key: "avg_kd", dec: 2, higherIsBetter: true },
+      { label: "K/D", key: "avg_kd", dec: 2, higherIsBetter: true },
       { label: "HS %", key: "avg_hs", dec: 1, higherIsBetter: true },
       { label: "Spray", key: "avg_spray", dec: 1, higherIsBetter: true },
       { label: "DPR", key: "avg_dpr", dec: 1, higherIsBetter: true },
@@ -121,16 +149,13 @@ function utilityDetail(
   a2: PlayerAverages,
 ): EmbedBuilder {
   return averagesEmbed(
-    `${p1Name} vs ${p2Name} \u2014 Utility (last 30)`,
+    `${p1Name} vs ${p2Name}: Utility (Last 30)`,
+    p1Name,
+    p2Name,
     [
+      { label: "Enemy Flash %", key: "flash_enemy_rate", dec: 2, higherIsBetter: true },
       {
-        label: "Enemy flash %",
-        key: "flash_enemy_rate",
-        dec: 2,
-        higherIsBetter: true,
-      },
-      {
-        label: "Team flash %",
+        label: "Team Flash %",
         key: "flash_friend_rate",
         dec: 2,
         higherIsBetter: false,
@@ -150,33 +175,36 @@ function h2hDetail(
   steamId2: string,
 ): EmbedBuilder {
   const h2h = getHeadToHead(steamId1, steamId2);
+  const title = `${p1Name} vs ${p2Name}: H2H`;
 
   if (h2h.sharedMatches === 0) {
-    return leetifyEmbed(`${p1Name} vs ${p2Name} \u2014 H2H`).setDescription(
-      "No shared matches found.",
-    );
+    return embed().setTitle(title).setDescription("No shared matches found.");
   }
 
-  const lines = [`Shared matches: **${h2h.sharedMatches}**`];
+  const e = embed()
+    .setTitle(title)
+    .addFields({
+      name: "Shared Matches",
+      value: `**${h2h.sharedMatches}**`,
+      inline: true,
+    });
 
   if (h2h.sameTeamMatches > 0) {
     const wr = ((h2h.sameTeamWins / h2h.sameTeamMatches) * 100).toFixed(0);
-    lines.push(
-      `Together: ${h2h.sameTeamWins}W ` +
-        `${h2h.sameTeamLosses}L ` +
-        `${h2h.sameTeamDraws}D ` +
+    e.addFields({
+      name: "Together",
+      value:
+        `${h2h.sameTeamWins}W ${h2h.sameTeamLosses}L ${h2h.sameTeamDraws}D ` +
         `(**${wr}%** WR)`,
-    );
+      inline: true,
+    });
   }
 
   const opp = h2h.sharedMatches - h2h.sameTeamMatches;
   if (opp > 0) {
-    lines.push(`Against each other: **${opp}**`);
+    e.addFields({ name: "Opposing", value: `**${opp}** matches`, inline: true });
   }
-
-  return leetifyEmbed(`${p1Name} vs ${p2Name} \u2014 H2H`).setDescription(
-    lines.join("\n"),
-  );
+  return e;
 }
 
 function formDetail(
@@ -204,14 +232,12 @@ function formDetail(
     return last > first ? " \u{1F4C8}" : " \u{1F4C9}";
   };
 
-  const lines = [
-    `${p1Name}${arrow(m1)}: ${trend(m1)}`,
-    `${p2Name}${arrow(m2)}: ${trend(m2)}`,
-  ];
-
-  return leetifyEmbed(`${p1Name} vs ${p2Name} \u2014 Recent Form`).setDescription(
-    lines.join("\n"),
-  );
+  return embed()
+    .setTitle(`${p1Name} vs ${p2Name}: Recent Form`)
+    .addFields(
+      { name: `${p1Name}${arrow(m1)}`, value: trend(m1), inline: false },
+      { name: `${p2Name}${arrow(m2)}`, value: trend(m2), inline: false },
+    );
 }
 
 // ── Helpers for profile/snapshot ──
@@ -325,25 +351,17 @@ export const execute = wrapCommand(async (interaction) => {
       };
     },
     render: (v, { cached, snapshotAt }) => {
-      const [pr1, pr2] = bold(v.premier1, v.premier2, 0);
-      const [lr1, lr2] = bold(v.leetify1, v.leetify2);
-      const [a1, a2] = bold(v.aim1, v.aim2);
-      const [u1v, u2v] = bold(v.utility1, v.utility2);
-      const [pos1, pos2] = bold(v.positioning1, v.positioning2);
-      const lines = [
-        `Premier: ${pr1} vs ${pr2}`,
-        `Leetify: ${lr1} vs ${lr2}`,
-        `Aim: ${a1} vs ${a2}`,
-        `Positioning: ${pos1} vs ${pos2}`,
-        `Utility: ${u1v} vs ${u2v}`,
-      ];
-      const desc = cached
-        ? lines.join("\n") + freshnessSuffix(snapshotAt, "snapshot from")
-        : lines.join("\n");
-      const embed = leetifyEmbed(`${v.n1} vs ${v.n2}`).setDescription(desc).setFooter({
+      const e = buildComparisonEmbed(`${v.n1} vs ${v.n2}`, v.n1, v.n2, [
+        { label: "Premier", v1: v.premier1, v2: v.premier2, dec: 0 },
+        { label: "Leetify", v1: v.leetify1, v2: v.leetify2 },
+        { label: "Aim", v1: v.aim1, v2: v.aim2 },
+        { label: "Positioning", v1: v.positioning1, v2: v.positioning2 },
+        { label: "Utility", v1: v.utility1, v2: v.utility2 },
+      ]).setFooter({
         text: "Use focus option for detail: ratings, combat, utility, h2h, form",
       });
-      return { embeds: [embed] };
+      if (cached) e.setDescription(freshnessSuffix(snapshotAt, "snapshot from").trim());
+      return { embeds: [e] };
     },
   });
 });

@@ -1,11 +1,12 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fetchGuildProfiles, freshnessSuffix, leetifyEmbed } from "../helpers.js";
+import { fetchGuildProfiles, freshnessSuffix } from "../helpers.js";
 import {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
   getTrackedPlayers,
   saveLeaderboardSnapshot,
 } from "../store.js";
+import { embed, rankPrefix } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -19,9 +20,8 @@ function buildLines(
   prevMap: Map<string, number | null>,
   prevOrder: string[],
 ) {
-  const medals = ["\u{1f947}", "\u{1f948}", "\u{1f949}"];
   return entries.map((e, i) => {
-    const prefix = medals[i] ?? `${i + 1}.`;
+    const prefix = rankPrefix(i);
     const rating = e.premier ? e.premier.toLocaleString() : "Unranked";
 
     let change = "";
@@ -42,7 +42,7 @@ function buildLines(
       }
     }
 
-    return `${prefix} **${e.name}** \u2014 ${rating}${change}${posChange}`;
+    return `${prefix} **${e.name}** ${rating}${change}${posChange}`;
   });
 }
 
@@ -104,7 +104,7 @@ export const execute = wrapCommand(async (interaction) => {
       const desc = cached
         ? lines.join("\n") + freshnessSuffix(snapshotAt, "snapshot from")
         : lines.join("\n");
-      return { embeds: [leetifyEmbed("Leaderboard").setDescription(desc)] };
+      return { embeds: [embed().setTitle("Leaderboard").setDescription(desc)] };
     },
     missingMessage:
       "Leetify is down and there's no cached leaderboard yet \u2014 try again shortly.",

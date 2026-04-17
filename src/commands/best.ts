@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder } from "discord.js";
 import {
   freshnessSuffix,
   kdRatio,
@@ -14,6 +14,7 @@ import {
   getBestMatch,
   getMostRecentMatchTime,
 } from "../store.js";
+import { embed } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 
 const STAT_CHOICES: { name: string; value: BestStatKey }[] = [
@@ -101,11 +102,10 @@ export const execute = wrapCommand(async (interaction) => {
       const headline =
         stat === "multikill" ? multikillBreakdown(match) : conf.format(match.statValue);
 
-      const embed = new EmbedBuilder()
-        .setTitle(`\u{1F3C6} Best ${conf.label.toLowerCase()} — last ${days}d`)
-        .setColor(0xf84982)
+      const e = embed("success")
+        .setTitle(`Best ${conf.label} (Last ${days}d)`)
         .setDescription(
-          `**${match.name}** on **${match.mapName}**\n${outcome}   ${relTime(match.finishedAt)}` +
+          `\u{1F3C6} **${match.name}** on **${match.mapName}** (${outcome}), ${relTime(match.finishedAt)}` +
             (cached ? freshnessSuffix(latest, "snapshot from") : ""),
         )
         .addFields(
@@ -120,11 +120,11 @@ export const execute = wrapCommand(async (interaction) => {
           },
           {
             name: "Rating",
-            value: match.rating != null ? match.rating.toFixed(2) : "—",
+            value: match.rating != null ? match.rating.toFixed(2) : "N/A",
             inline: true,
           },
         );
-      return { embeds: [embed] };
+      return { embeds: [e] };
     },
     missingMessage: "No match data yet.",
   });

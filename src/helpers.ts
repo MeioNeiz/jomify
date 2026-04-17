@@ -1,13 +1,7 @@
-import { type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
+import type { ChatInputCommandInteraction } from "discord.js";
 import { getProfile, LeetifyNotFoundError } from "./leetify/client.js";
 import type { LeetifyProfile } from "./leetify/types.js";
 import { getTrackedPlayers, isLeetifyUnknown } from "./store.js";
-
-export const BRAND_COLOUR = 0xf84982;
-
-export function leetifyEmbed(title: string) {
-  return new EmbedBuilder().setTitle(title).setColor(BRAND_COLOUR);
-}
 
 /** Guild id for a slash command, or null (after replying) for a DM. */
 export async function requireGuild(

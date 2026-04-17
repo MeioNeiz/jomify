@@ -1,5 +1,5 @@
 import type { Client, TextChannel } from "discord.js";
-import { fetchGuildProfiles, leetifyEmbed } from "./helpers.js";
+import { fetchGuildProfiles } from "./helpers.js";
 import log from "./logger.js";
 import {
   getAllGuildIds,
@@ -9,6 +9,7 @@ import {
   saveLeaderboardSnapshot,
   saveSnapshots,
 } from "./store.js";
+import { embed, rankPrefix } from "./ui.js";
 
 const WEEKLY_COLOUR = 0x5865f2; // Discord blurple
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -65,10 +66,8 @@ async function postWeeklyLeaderboard(client: Client) {
         .sort((a, b) => (b.premier ?? 0) - (a.premier ?? 0))
         .map((e) => e.steamId);
 
-      const medals = ["\u{1f947}", "\u{1f948}", "\u{1f949}"];
-
       const lines = entries.map((e, i) => {
-        const prefix = medals[i] ?? `${i + 1}.`;
+        const prefix = rankPrefix(i);
         const rating = e.premier ? e.premier.toLocaleString() : "Unranked";
 
         let change = "";
@@ -89,17 +88,18 @@ async function postWeeklyLeaderboard(client: Client) {
           }
         }
 
-        return `${prefix} **${e.name}** \u2014 ` + `${rating}${change}${posChange}`;
+        return `${prefix} **${e.name}** ${rating}${change}${posChange}`;
       });
 
-      const embed = leetifyEmbed("Weekly Leaderboard")
+      const weeklyEmbed = embed()
+        .setTitle("Weekly Leaderboard")
         .setColor(WEEKLY_COLOUR)
         .setDescription(lines.join("\n"));
 
       const channel = await client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
         await (channel as TextChannel).send({
-          embeds: [embed],
+          embeds: [weeklyEmbed],
         });
       }
 

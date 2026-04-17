@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder } from "discord.js";
 import {
   fmt,
   freshnessSuffix,
@@ -9,6 +9,7 @@ import {
 import type { LeetifyPlayerStats } from "../leetify/types.js";
 import { refreshPlayers } from "../refresh.js";
 import { getMostRecentMatchTime, getRecentMatchesSince } from "../store.js";
+import { embed, rankPrefix } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -107,17 +108,27 @@ async function shameOne(
     },
     render: (v) => ({
       embeds: [
-        new EmbedBuilder()
+        embed("danger")
           .setTitle("Wall of Shame")
-          .setColor(0xff0000)
           .setDescription(
-            `<@${discordId}>'s worst game (last 2 days):\n` +
-              `**${fmt(v.dpr, 0)} ADR** on **${v.map}** \u2014 ` +
-              `**${outcomeTag(v.roundsWon, v.roundsLost)}**\n` +
-              `${v.kills}/${v.deaths}/${v.assists} KDA` +
-              ` \u2022 ${fmt(v.rating, 2)} rating` +
-              ` \u2022 ${fmt(v.hs * 100, 0)}% HS` +
+            `<@${discordId}>'s worst game in the last 2 days.` +
               freshnessSuffix(v.finishedAt, "played"),
+          )
+          .addFields(
+            {
+              name: "Map",
+              value: `${v.map} (${outcomeTag(v.roundsWon, v.roundsLost)})`,
+              inline: true,
+            },
+            { name: "ADR", value: fmt(v.dpr, 0), inline: true },
+            { name: "Rating", value: fmt(v.rating, 2), inline: true },
+            {
+              name: "KDA",
+              value: `${v.kills}/${v.deaths}/${v.assists}`,
+              inline: true,
+            },
+            { name: "K/D", value: kdRatio(v.kills, v.deaths), inline: true },
+            { name: "HS %", value: `${fmt(v.hs * 100, 0)}%`, inline: true },
           ),
       ],
     }),
@@ -186,21 +197,21 @@ async function shameGuild(
     },
     render: ({ rows, latest }) => {
       const top = rows.slice(0, 3);
-      const lines = top.map(
-        (r, i) =>
-          `${i + 1}. **${r.name}** \u2014 ${fmt(r.dpr, 0)} ADR` +
-          ` \u2022 ${kdRatio(r.kills, r.deaths)} KD on ${r.map}` +
-          ` (${outcomeTag(r.roundsWon, r.roundsLost)})`,
-      );
-      const embed = new EmbedBuilder()
-        .setTitle(`Wall of Shame \u2014 ${TITLES[focus]}`)
-        .setColor(0xff0000)
+      const lines = top.map((r, i) => {
+        const stat = `${fmt(r.dpr, 0)} ADR, ${kdRatio(r.kills, r.deaths)} K/D`;
+        return (
+          `${rankPrefix(i)} **${r.name}** on ${r.map} ` +
+          `(${outcomeTag(r.roundsWon, r.roundsLost)})\n    ${stat}`
+        );
+      });
+      const e = embed("danger")
+        .setTitle(`Wall of Shame: ${TITLES[focus]}`)
         .setDescription(
-          `**${top[0]?.name}** takes the crown\n\n` +
+          `**${top[0]?.name}** takes the crown.\n\n` +
             lines.join("\n") +
             freshnessSuffix(latest, "last match"),
         );
-      return { embeds: [embed] };
+      return { embeds: [e] };
     },
     missingMessage: "No matches in the last 2 days.",
   });
