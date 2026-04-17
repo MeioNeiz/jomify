@@ -172,15 +172,17 @@ export const BEST_STATS: Record<
     sortExpr: "ms.accuracy_head",
     format: (v) => `${v.toFixed(1)}%`,
   },
-  // Composite: head accuracy dominates, spray contributes half, preaim
-  // penalises (preaim = cm of crosshair drift before firing, lower is
-  // better). Dimensionless score — only useful ordinally.
+  // Composite: head accuracy (0-1) dominates, spray contributes half,
+  // preaim penalises (cm of crosshair drift before firing; lower is
+  // better — typical range 2-8). Scaled so typical scores sit in the
+  // 20-70 range, which reads as an intuitive "aim grade" instead of
+  // the near-zero negatives the unscaled formula produced.
   aim: {
     label: "Aim score",
     sortExpr:
-      "(COALESCE(ms.accuracy_head, 0)" +
-      " + 0.5 * COALESCE(ms.spray_accuracy, 0)" +
-      " - 0.3 * COALESCE(CAST(json_extract(ms.raw, '$.preaim') AS REAL), 0))",
+      "(100 * COALESCE(ms.accuracy_head, 0)" +
+      " + 50 * COALESCE(ms.spray_accuracy, 0)" +
+      " - 5 * COALESCE(CAST(json_extract(ms.raw, '$.preaim') AS REAL), 0))",
     format: (v) => v.toFixed(1),
   },
   // % of rounds survived. Proxy for positioning/trade discipline.
@@ -238,6 +240,17 @@ export interface BestMatch {
   multi3k: number | null;
   multi4k: number | null;
   multi5k: number | null;
+  // Per-stat context surfaced by /best — populated for every row and
+  // cheap to pull since we already have the match_stats row in hand.
+  accuracyHead: number | null;
+  sprayAccuracy: number | null;
+  preaim: number | null;
+  flashEnemies: number | null;
+  flashTeam: number | null;
+  flashKills: number | null;
+  flashBlind: number | null;
+  heEnemies: number | null;
+  heFriends: number | null;
   statValue: number;
 }
 
@@ -265,6 +278,15 @@ export function getBestMatch(
          ms.multi3k AS multi3k,
          ms.multi4k AS multi4k,
          ms.multi5k AS multi5k,
+         ms.accuracy_head AS accuracyHead,
+         ms.spray_accuracy AS sprayAccuracy,
+         CAST(json_extract(ms.raw, '$.preaim') AS REAL) AS preaim,
+         ms.flashbang_hit_foe AS flashEnemies,
+         ms.flashbang_hit_friend AS flashTeam,
+         CAST(json_extract(ms.raw, '$.flashbang_leading_to_kill') AS INTEGER) AS flashKills,
+         CAST(json_extract(ms.raw, '$.flashbang_hit_foe_avg_duration') AS REAL) AS flashBlind,
+         CAST(json_extract(ms.raw, '$.he_foes_damage_avg') AS REAL) AS heEnemies,
+         CAST(json_extract(ms.raw, '$.he_friends_damage_avg') AS REAL) AS heFriends,
          m.map_name AS mapName,
          m.finished_at AS finishedAt,
          ${sortExpr} AS statValue

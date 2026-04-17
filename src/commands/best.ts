@@ -66,6 +66,105 @@ function multikillBreakdown(m: BestMatch): string {
   return parts.length ? parts.join(", ") : "none";
 }
 
+function pct(n: number | null): string {
+  return n != null ? `${(n * 100).toFixed(1)}%` : "N/A";
+}
+
+function num(n: number | null, dec = 1): string {
+  return n != null ? n.toFixed(dec) : "N/A";
+}
+
+/**
+ * Per-stat breakdown — the "what made this the best {stat}" detail
+ * the headline number alone doesn't explain. Returned as an array of
+ * embed fields so they render as columns beside the headline number.
+ */
+function contextFields(
+  stat: BestStatKey,
+  m: BestMatch,
+): { name: string; value: string; inline: boolean }[] {
+  switch (stat) {
+    case "flash":
+      return [
+        {
+          name: "Flashes",
+          value:
+            `\u{1F4A5} ${m.flashEnemies ?? 0} enemies (${num(m.flashBlind, 1)}s avg)\n` +
+            `\u26A1 ${m.flashKills ?? 0} kills\n` +
+            `\u{1F91D} ${m.flashTeam ?? 0} team hits`,
+          inline: true,
+        },
+      ];
+    case "aim":
+      return [
+        {
+          name: "Accuracy",
+          value:
+            `\u{1F3AF} HS ${pct(m.accuracyHead)}\n` +
+            `Spray ${pct(m.sprayAccuracy)}\n` +
+            `Preaim ${num(m.preaim, 2)} cm`,
+          inline: true,
+        },
+      ];
+    case "utility":
+      return [
+        {
+          name: "Utility",
+          value:
+            `\u{1F4A5} HE dmg ${num(m.heEnemies, 1)} (friendly ${num(m.heFriends, 1)})\n` +
+            `\u{1F91D} team flashes ${m.flashTeam ?? 0}`,
+          inline: true,
+        },
+      ];
+    case "clutch":
+    case "multikill":
+      return [
+        {
+          name: "Multikills",
+          value: multikillBreakdown(m),
+          inline: true,
+        },
+      ];
+    case "hs":
+      return [{ name: "Headshot %", value: pct(m.accuracyHead), inline: true }];
+    default:
+      return [];
+  }
+}
+
+/**
+ * One-line explainer per stat — rendered as Discord `-#` subtext so it
+ * reads like a tooltip under the headline number. Dimensionless scores
+ * (aim/utility/clutch) get their formula; direct stats get nothing.
+ */
+function statExplainer(stat: BestStatKey): string {
+  switch (stat) {
+    case "flash":
+      return (
+        "-# Flash impact = (enemy hits × avg blind duration " +
+        "+ 2 × kills + flash assists − 2 × team hits) ÷ rounds."
+      );
+    case "aim":
+      return (
+        "-# Aim score = 100 × head accuracy + 50 × spray − 5 × preaim. " +
+        "Higher is better; typical range 20-70."
+      );
+    case "utility":
+      return "-# Utility score = flash impact + 0.5 × HE damage − 0.3 × friendly HE damage.";
+    case "clutch":
+      return (
+        "-# Clutch proxy = 10 × 5Ks + 5 × 4Ks + 3 × 3Ks. " +
+        "Leetify doesn't publish per-round clutch data so this is a stand-in."
+      );
+    case "positioning":
+      return "-# Survival % = 1 − deaths / rounds.";
+    case "multikill":
+      return "-# Tier-weighted; a single 5K beats any number of 4Ks.";
+    default:
+      return "";
+  }
+}
+
 export const execute = wrapCommand(async (interaction) => {
   const guild = await requireTrackedGuild(interaction);
   if (!guild) return;
@@ -102,25 +201,26 @@ export const execute = wrapCommand(async (interaction) => {
       const headline =
         stat === "multikill" ? multikillBreakdown(match) : conf.format(match.statValue);
 
+      const explainer = statExplainer(stat);
+      const bodyLines = [
+        `\u{1F3C6} **${match.name}** on **${match.mapName}** (${outcome}), ${relTime(match.finishedAt)}`,
+      ];
+      if (explainer) bodyLines.push(explainer);
+
       const e = embed("success")
         .setTitle(`Best ${conf.label} (Last ${days}d)`)
         .setDescription(
-          `\u{1F3C6} **${match.name}** on **${match.mapName}** (${outcome}), ${relTime(match.finishedAt)}` +
-            (cached ? freshnessSuffix(latest, "snapshot from") : ""),
+          bodyLines.join("\n") + (cached ? freshnessSuffix(latest, "snapshot from") : ""),
         )
         .addFields(
           { name: conf.label, value: `**${headline}**`, inline: true },
+          ...contextFields(stat, match),
           {
             name: "Score",
             value:
               `${match.kills}/${match.deaths}/${match.assists} KDA\n` +
               `${kdRatio(match.kills, match.deaths)} K/D\n` +
               `${Math.round(match.dpr)} ADR`,
-            inline: true,
-          },
-          {
-            name: "Rating",
-            value: match.rating != null ? match.rating.toFixed(2) : "N/A",
             inline: true,
           },
         );
