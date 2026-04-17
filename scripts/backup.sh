@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Daily SQLite backup to a private GitHub repo.
+# SQLite backup to a private GitHub repo.
+#
+#   ./scripts/backup.sh                 # standard daily, replaces today's
+#   ./scripts/backup.sh pre-migration   # custom-tagged, never auto-pruned
+#
+# The daily variant participates in tapered retention (see below).
+# Custom-tagged backups are gzipped immediately and kept forever — delete
+# them manually in the backup repo when you don't need them.
 #
 # Runs on the VM via systemd timer (deploy/jomify-backup.timer).
 # Requires:
 #   - $HOME/.jomify-backup-pat  : fine-grained PAT with write access to BACKUP_REPO
 #   - $BACKUP_REPO below        : your private backup repo slug (user/repo)
-#
-# Files live at $HOME/jomify-backups/ as jomify-YYYY-MM-DD.db, pruned to
-# $RETAIN_DAYS. SQLite's `.backup` is safe while the bot has the DB open.
 
 set -euo pipefail
 
@@ -15,6 +19,8 @@ BACKUP_REPO="${JOMIFY_BACKUP_REPO:-MeioNeiz/jomify-backups}"
 BACKUP_DIR="$HOME/jomify-backups"
 DB_PATH="$HOME/jomify/jomify.db"
 TOKEN_FILE="$HOME/.jomify-backup-pat"
+TAG="${1:-}"
+TODAY="$(date -u +%F)"
 
 if [[ ! -f "$TOKEN_FILE" ]]; then
   echo "Missing $TOKEN_FILE — create a GitHub PAT and save it there." >&2
@@ -38,7 +44,13 @@ fi
 
 # Consistent snapshot — safe with concurrent writers, uses SQLite's
 # native online backup API.
-BACKUP_FILE="jomify-$(date -u +%F).db"
+if [[ -n "$TAG" ]]; then
+  # sanitise tag to safe filename chars
+  SAFE_TAG="$(echo "$TAG" | tr -c 'A-Za-z0-9-' '-' | sed 's/-\+/-/g; s/^-\|-$//g')"
+  BACKUP_FILE="jomify-${TODAY}-${SAFE_TAG}.db"
+else
+  BACKUP_FILE="jomify-${TODAY}.db"
+fi
 sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"
 
 # Retention policy (tapered GFS-style):
@@ -55,11 +67,18 @@ declare -A month_kept
 NOW=$(date -u +%s)
 while IFS= read -r file; do
   [[ -z "$file" ]] && continue
-  # Strip both .db and .db.gz so date parsing works regardless of
-  # compression state.
-  date_str="${file##*/jomify-}"
-  date_str="${date_str%.db.gz}"
-  date_str="${date_str%.db}"
+  # Tagged backups (jomify-YYYY-MM-DD-<tag>.db) are intentional snapshots
+  # — skip retention for them entirely.
+  if [[ "$file" =~ ^jomify-[0-9]{4}-[0-9]{2}-[0-9]{2}-.+\.db(\.gz)?$ ]]; then
+    continue
+  fi
+  # Extract the date prefix; anything that doesn't match the expected
+  # shape is left alone.
+  if [[ "$file" =~ ^jomify-([0-9]{4}-[0-9]{2}-[0-9]{2})\.db(\.gz)?$ ]]; then
+    date_str="${BASH_REMATCH[1]}"
+  else
+    continue
+  fi
   age=$(( (NOW - $(date -u -d "$date_str" +%s)) / 86400 ))
 
   if (( age <= 7 )); then
@@ -88,11 +107,10 @@ while IFS= read -r file; do
   fi
 done < <(ls -1 jomify-*.db jomify-*.db.gz 2>/dev/null | sort -r)
 
-# Compress everything except today's snapshot. Today's stays raw so
-# restoring the latest is a straight `cp`. Older files rarely get
-# restored; gzip brings each one down ~3-5x. Uses -f to overwrite any
-# stale .gz artefacts left by a failed prior run.
-TODAY_FILE="jomify-$(date -u +%F).db"
+# Compression pass. Everything that isn't today's daily (exactly
+# `jomify-YYYY-MM-DD.db`) gets gzipped — that includes tagged backups
+# and any previous-day snapshots that weren't yet compressed.
+TODAY_FILE="jomify-${TODAY}.db"
 for file in jomify-*.db; do
   [[ "$file" == "$TODAY_FILE" ]] && continue
   [[ -f "$file" ]] || continue
@@ -105,7 +123,7 @@ if git diff --cached --quiet; then
   exit 0
 fi
 
-git commit -q -m "backup $(date -u +%F)"
+git commit -q -m "backup $(date -u +%F)${TAG:+ [$TAG]}"
 
 TOKEN="$(cat "$TOKEN_FILE")"
 git push -q "https://${TOKEN}@github.com/${BACKUP_REPO}.git" main
