@@ -1,6 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
-import { analyseStats, SUSPECT_THRESHOLD } from "../analyse.js";
-import { relTime } from "../helpers.js";
+import { analyseStats } from "../analyse.js";
 import { type EncounterRow, getEncounters, getPlayerMatchStats } from "../store.js";
 import { embed } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
@@ -9,11 +8,11 @@ const DEFAULT_DAYS = 7;
 const MAX_DAYS = 90;
 const MIN_MATCHES_FOR_ANALYSIS = 10;
 const ANALYSIS_HISTORY = 30;
-const MAX_SURFACED = 10;
+const MAX_SURFACED = 25;
 
 export const data = new SlashCommandBuilder()
   .setName("suspects")
-  .setDescription("Find sus players you've recently queued with or against")
+  .setDescription("Rank everyone you've recently queued with or against by sus score")
   .addIntegerOption((o) =>
     o
       .setName("days")
@@ -30,16 +29,21 @@ interface SuspectEntry {
   name: string;
   score: number;
   matchCount: number;
-  flagged: string[];
-  encounters: EncounterRow[];
+  encounterCount: number;
+  withCount: number;
+  vsCount: number;
 }
 
-function verdictFor(score: number): { label: string; icon: string } {
-  if (score >= 8) return { label: "Suss", icon: "\u{1F6A9}" };
-  return { label: "Sussy", icon: "\u26A0\uFE0F" };
+// Verdict bands. The underlying threshold for "flagged" in /sus is 4;
+// here we widen to surface context (nothing happens at the cliff-edge
+// of 4.0 looking dramatically different from 3.9).
+function verdictFor(score: number): { icon: string } {
+  if (score >= 8) return { icon: "\u{1F6A9}" }; // strong sus
+  if (score >= 5) return { icon: "\u26A0\uFE0F" }; // sussy
+  if (score >= 3) return { icon: "\u{1F914}" }; // slightly elevated — thinking-face
+  return { icon: "\u2705" }; // clean
 }
 
-/** Group encounters by the other player's steam id, preserving order. */
 function groupByPlayer(encounters: EncounterRow[]): Map<string, EncounterRow[]> {
   const byId = new Map<string, EncounterRow[]>();
   for (const e of encounters) {
@@ -50,58 +54,39 @@ function groupByPlayer(encounters: EncounterRow[]): Map<string, EncounterRow[]> 
   return byId;
 }
 
-function analyseCandidate(
+function buildEntry(
   steamId: string,
   displayName: string,
   encounters: EncounterRow[],
 ): SuspectEntry | null {
   const history = getPlayerMatchStats(steamId, ANALYSIS_HISTORY);
   if (history.length < MIN_MATCHES_FOR_ANALYSIS) return null;
-
-  const { checks, score } = analyseStats(history.map((m) => m.raw));
-  if (score < SUSPECT_THRESHOLD) return null;
-
-  const flagged = checks
-    .filter((c) => c.flagged)
-    .sort((a, b) => b.z - a.z)
-    .map((c) => c.name);
-
+  const { score } = analyseStats(history.map((m) => m.raw));
+  let withCount = 0;
+  let vsCount = 0;
+  for (const e of encounters) {
+    if (e.relationship === "with") withCount++;
+    else vsCount++;
+  }
   return {
     steamId,
     name: displayName,
     score,
     matchCount: history.length,
-    flagged,
-    encounters,
+    encounterCount: encounters.length,
+    withCount,
+    vsCount,
   };
 }
 
-function formatEncounter(e: EncounterRow): string {
-  const side = e.relationship === "with" ? "with" : "vs";
-  const map = e.mapName.replace(/^de_/, "");
-  return `${side} on ${map}, ${relTime(e.finishedAt)}`;
-}
-
-function renderField(s: SuspectEntry): { name: string; value: string } {
+function renderLine(s: SuspectEntry): string {
   const v = verdictFor(s.score);
   const profile = `https://steamcommunity.com/profiles/${s.steamId}`;
-  const header =
-    `${v.icon} **[${s.name}](${profile})** ` +
-    `\u2014 ${v.label} (score ${s.score.toFixed(1)}, ${s.matchCount} recent matches)`;
-  const flagLine = s.flagged.length
-    ? `\u{1F6A9} ${s.flagged.join(", ")}`
-    : "No individual stat flagged, but composite score is elevated.";
-  // Cap encounters shown per player so a single repeat offender doesn't
-  // blow out the embed's 1024-char field limit. Matches are surfaced newest
-  // first (encounters are ordered DESC by finished_at).
-  const shown = s.encounters.slice(0, 5);
-  const more = s.encounters.length - shown.length;
-  const lines = shown.map(formatEncounter);
-  if (more > 0) lines.push(`\u2026 and ${more} more`);
-  return {
-    name: `${s.name}`,
-    value: `${header}\n${flagLine}\n${lines.join("\n")}`,
-  };
+  // Score bold so it's the visual anchor; encounter split in parens.
+  return (
+    `${v.icon} [${s.name}](${profile}) **${s.score.toFixed(1)}**` +
+    ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`
+  );
 }
 
 export const execute = wrapCommand(async (interaction) => {
@@ -118,49 +103,45 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const suspects: SuspectEntry[] = [];
+  const entries: SuspectEntry[] = [];
+  let skipped = 0;
   for (const [otherId, rows] of groupByPlayer(encounters)) {
-    // Skip the target themselves — shouldn't happen given the SQL, but be safe.
     if (otherId === steamId) continue;
-    const entry = analyseCandidate(otherId, rows[0]?.otherName ?? otherId, rows);
-    if (entry) suspects.push(entry);
+    const entry = buildEntry(otherId, rows[0]?.otherName ?? otherId, rows);
+    if (entry) entries.push(entry);
+    else skipped++;
   }
 
-  // Highest score first so the worst offenders are at the top of the embed.
-  suspects.sort((a, b) => b.score - a.score);
-  const shown = suspects.slice(0, MAX_SURFACED);
-
+  entries.sort((a, b) => b.score - a.score);
+  const shown = entries.slice(0, MAX_SURFACED);
+  const flaggedCount = entries.filter((e) => e.score >= 4).length;
   const uniqueEncountered = new Set(encounters.map((e) => e.otherSteamId)).size;
+
   const title = `Suspects \u2014 ${label} (last ${days}d)`;
+  // Colour leans on the strongest signal in the list: red if anyone is
+  // genuinely flagged, yellow for elevated-only, green for clean.
+  const topScore = entries[0]?.score ?? 0;
+  const kind = topScore >= 5 ? "danger" : topScore >= 3 ? "warn" : "success";
 
-  if (!shown.length) {
-    const e = embed("success")
-      .setTitle(title)
-      .setDescription(
-        `No sus players found across ${encounters.length} encounter(s) with ` +
-          `${uniqueEncountered} unique player(s).\n` +
-          "-# Sus score is a z-score composite vs competitive averages. " +
-          "Non-definitive \u2014 players need 10+ recent matches to be analysed.",
-      );
-    await interaction.editReply({ embeds: [e] });
-    return;
-  }
+  const subtext =
+    "-# \uD83D\uDEA9 \u22658 strong sus \u00B7 \u26A0\uFE0F \u22655 sussy " +
+    "\u00B7 \uD83E\uDD14 \u22653 elevated \u00B7 \u2705 clean. " +
+    "Score is a z-score composite vs competitive averages, non-definitive.";
+  const header =
+    `**${flaggedCount}** flagged of ${entries.length} analysed ` +
+    `(${uniqueEncountered} unique players, ${encounters.length} total encounters)` +
+    (skipped > 0
+      ? `\n-# ${skipped} player(s) skipped — fewer than ${MIN_MATCHES_FOR_ANALYSIS} recent matches stored.`
+      : "");
 
-  const e = embed("danger")
+  const body = shown.map(renderLine).join("\n");
+  const hidden = entries.length - shown.length;
+  const hiddenLine =
+    hidden > 0 ? `\n-# ${hidden} more hidden — try a shorter window.` : "";
+
+  const e = embed(kind)
     .setTitle(title)
-    .setDescription(
-      `Flagged **${shown.length}** of ${uniqueEncountered} unique players ` +
-        `across ${encounters.length} encounter(s).\n` +
-        "-# Sus score is a z-score composite vs competitive averages. " +
-        "Non-definitive \u2014 z-scores amplify small samples and legit pros flag too.",
-    )
-    .addFields(shown.map(renderField));
-
-  if (suspects.length > MAX_SURFACED) {
-    e.setFooter({
-      text: `${suspects.length - MAX_SURFACED} more suspect(s) hidden \u2014 narrow the window with days:`,
-    });
-  }
+    .setDescription(`${header}\n\n${body}${hiddenLine}\n\n${subtext}`);
 
   await interaction.editReply({ embeds: [e] });
 });
