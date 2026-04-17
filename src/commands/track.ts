@@ -1,5 +1,6 @@
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
 import { requireGuild } from "../helpers.js";
+import { isLeetifyCircuitOpen } from "../leetify/client.js";
 import { resolveSteamId } from "../steam/client.js";
 import {
   addTrackedPlayer,
@@ -94,6 +95,15 @@ export const execute = wrapCommand(async (interaction) => {
       await interaction.editReply(
         `Added ${target.label}, but they haven't signed up for Leetify yet. ` +
           "Once they sign in at leetify.com and play a match I'll start tracking automatically.",
+      );
+      return;
+    }
+    // 0 matches + circuit open = backfill failed because Leetify is
+    // down, not because they have no games. Avoid the misleading
+    // "Loaded 0 matches" — watcher will retry when it recovers.
+    if (count === 0 && isLeetifyCircuitOpen()) {
+      await interaction.editReply(
+        `Added ${target.label}. Leetify is down right now, so I'll backfill their matches automatically once it's back.`,
       );
       return;
     }
