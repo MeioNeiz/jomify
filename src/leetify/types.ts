@@ -59,7 +59,7 @@ export interface LeetifyRecentMatch {
   data_source: string;
   outcome: string;
   rank: number;
-  rank_type: number | null;
+  rank_type?: number | null;
   map_name: string;
   leetify_rating: number;
   score: [number, number];
