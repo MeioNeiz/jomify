@@ -1,4 +1,12 @@
-import { SlashCommandBuilder } from "discord.js";
+import {
+  ActionRowBuilder,
+  type EmbedBuilder,
+  type InteractionEditReplyOptions,
+  SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+} from "discord.js";
+import { registerComponent } from "../components.js";
 import {
   freshnessSuffix,
   kdRatio,
@@ -13,6 +21,7 @@ import {
   type BestStatKey,
   getBestMatch,
   getMostRecentMatchTime,
+  getTrackedPlayers,
 } from "../store.js";
 import { embed } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
@@ -74,11 +83,6 @@ function num(n: number | null, dec = 1): string {
   return n != null ? n.toFixed(dec) : "N/A";
 }
 
-/**
- * Per-stat breakdown — the "what made this the best {stat}" detail
- * the headline number alone doesn't explain. Returned as an array of
- * embed fields so they render as columns beside the headline number.
- */
 function contextFields(
   stat: BestStatKey,
   m: BestMatch,
@@ -132,11 +136,6 @@ function contextFields(
   }
 }
 
-/**
- * One-line explainer per stat — rendered as Discord `-#` subtext so it
- * reads like a tooltip under the headline number. Dimensionless scores
- * (aim/utility/clutch) get their formula; direct stats get nothing.
- */
 function statExplainer(stat: BestStatKey): string {
   switch (stat) {
     case "flash":
@@ -165,6 +164,69 @@ function statExplainer(stat: BestStatKey): string {
   }
 }
 
+function loadView(steamIds: string[], stat: BestStatKey, days: number): View {
+  return {
+    match: getBestMatch(steamIds, stat, days),
+    stat,
+    days,
+    latest: getMostRecentMatchTime(steamIds),
+  };
+}
+
+function buildStatSelect(days: number, currentStat: BestStatKey) {
+  const options = STAT_CHOICES.map((c) =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(c.name)
+      .setValue(c.value)
+      .setDefault(c.value === currentStat),
+  );
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`best:stat:${days}`)
+    .setPlaceholder("Change stat")
+    .addOptions(options);
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+function buildPayload(v: View, opts: { cached: boolean }): InteractionEditReplyOptions {
+  const conf = BEST_STATS[v.stat];
+  if (!v.match) {
+    return {
+      content: `No tracked players have ${conf.label.toLowerCase()} data in the last ${v.days} days.`,
+      components: [buildStatSelect(v.days, v.stat)],
+      embeds: [],
+    };
+  }
+  const outcome = outcomeTag(v.match.roundsWon ?? 0, v.match.roundsLost ?? 0);
+  const headline =
+    v.stat === "multikill" ? multikillBreakdown(v.match) : conf.format(v.match.statValue);
+
+  const explainer = statExplainer(v.stat);
+  const bodyLines = [
+    `\u{1F3C6} **${v.match.name}** on **${v.match.mapName}** (${outcome}), ${relTime(v.match.finishedAt)}`,
+  ];
+  if (explainer) bodyLines.push(explainer);
+
+  const e: EmbedBuilder = embed("success")
+    .setTitle(`Best ${conf.label} (Last ${v.days}d)`)
+    .setDescription(
+      bodyLines.join("\n") +
+        (opts.cached ? freshnessSuffix(v.latest, "snapshot from") : ""),
+    )
+    .addFields(
+      { name: conf.label, value: `**${headline}**`, inline: true },
+      ...contextFields(v.stat, v.match),
+      {
+        name: "Score",
+        value:
+          `${v.match.kills}/${v.match.deaths}/${v.match.assists} KDA\n` +
+          `${kdRatio(v.match.kills, v.match.deaths)} K/D\n` +
+          `${Math.round(v.match.dpr)} ADR`,
+        inline: true,
+      },
+    );
+  return { embeds: [e], components: [buildStatSelect(v.days, v.stat)] };
+}
+
 export const execute = wrapCommand(async (interaction) => {
   const guild = await requireTrackedGuild(interaction);
   if (!guild) return;
@@ -174,58 +236,38 @@ export const execute = wrapCommand(async (interaction) => {
 
   await respondWithRevalidate<View>(interaction, {
     fetchCached: () => {
-      const match = getBestMatch(steamIds, stat, days);
-      if (!match) return null;
-      return {
-        data: { match, stat, days, latest: match.finishedAt },
-        snapshotAt: match.finishedAt,
-      };
+      const v = loadView(steamIds, stat, days);
+      if (!v.match) return null;
+      return { data: v, snapshotAt: v.match.finishedAt };
     },
     fetchFresh: async () => {
       await refreshPlayers(steamIds);
-      return {
-        match: getBestMatch(steamIds, stat, days),
-        stat,
-        days,
-        latest: getMostRecentMatchTime(steamIds),
-      };
+      return loadView(steamIds, stat, days);
     },
-    render: ({ match, stat, days, latest }, { cached }) => {
-      const conf = BEST_STATS[stat];
-      if (!match) {
-        return {
-          content: `No tracked players have ${conf.label.toLowerCase()} data in the last ${days} days.`,
-        };
-      }
-      const outcome = outcomeTag(match.roundsWon ?? 0, match.roundsLost ?? 0);
-      const headline =
-        stat === "multikill" ? multikillBreakdown(match) : conf.format(match.statValue);
-
-      const explainer = statExplainer(stat);
-      const bodyLines = [
-        `\u{1F3C6} **${match.name}** on **${match.mapName}** (${outcome}), ${relTime(match.finishedAt)}`,
-      ];
-      if (explainer) bodyLines.push(explainer);
-
-      const e = embed("success")
-        .setTitle(`Best ${conf.label} (Last ${days}d)`)
-        .setDescription(
-          bodyLines.join("\n") + (cached ? freshnessSuffix(latest, "snapshot from") : ""),
-        )
-        .addFields(
-          { name: conf.label, value: `**${headline}**`, inline: true },
-          ...contextFields(stat, match),
-          {
-            name: "Score",
-            value:
-              `${match.kills}/${match.deaths}/${match.assists} KDA\n` +
-              `${kdRatio(match.kills, match.deaths)} K/D\n` +
-              `${Math.round(match.dpr)} ADR`,
-            inline: true,
-          },
-        );
-      return { embeds: [e] };
-    },
+    render: (v, { cached }) => buildPayload(v, { cached }),
     missingMessage: "No match data yet.",
   });
+});
+
+// Stat select handler: customId "best:stat:<days>", chosen stat in values[0].
+// Re-queries against the clicker's guild so the same button works for
+// any viewer (the original embed doesn't belong to one user).
+registerComponent("best", async (interaction) => {
+  if (!interaction.isStringSelectMenu()) return;
+  const [, action, daysStr] = interaction.customId.split(":");
+  if (action !== "stat" || !daysStr) return;
+  const stat = interaction.values[0] as BestStatKey;
+  if (!(stat in BEST_STATS)) return;
+  const days = Number(daysStr);
+  if (!interaction.guildId) {
+    await interaction.reply({ content: "Use this in a server.", ephemeral: true });
+    return;
+  }
+  const steamIds = getTrackedPlayers(interaction.guildId);
+  if (!steamIds.length) {
+    await interaction.reply({ content: "No tracked players.", ephemeral: true });
+    return;
+  }
+  const v = loadView(steamIds, stat, days);
+  await interaction.update(buildPayload(v, { cached: false }));
 });
