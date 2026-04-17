@@ -19,6 +19,9 @@ export const config = {
   get leetifyApiKey() {
     return env("LEETIFY_API_KEY");
   },
+  get steamApiKey() {
+    return env("STEAM_API_KEY");
+  },
   get csfloatApiKey(): string | null {
     return process.env.CSFLOAT_API_KEY ?? null;
   },

@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
+import { resolveSteamId } from "../steam/client.js";
 import { linkAccount } from "../store.js";
 import { wrapCommand } from "./handler.js";
 
@@ -13,9 +14,22 @@ export const data = new SlashCommandBuilder()
   );
 
 export const execute = wrapCommand(async (interaction) => {
-  const steamId = interaction.options.getString("steamid", true);
+  const raw = interaction.options.getString("steamid", true);
   const user = interaction.options.getUser("user");
   const discordId = user?.id ?? interaction.user.id;
+
+  const result = await resolveSteamId(raw);
+  if (!result.ok) {
+    const msg =
+      result.reason === "not-found"
+        ? `Couldn't find a Steam profile for \`${raw}\`.`
+        : result.reason === "invalid-input"
+          ? `\`${raw}\` doesn't look like a Steam ID, profile URL, or vanity name.`
+          : "Steam API is unreachable — try again in a moment.";
+    await interaction.editReply(msg);
+    return;
+  }
+  const steamId = result.steamId;
 
   const { previousSteamId, previousDiscordId } = linkAccount(discordId, steamId);
 
