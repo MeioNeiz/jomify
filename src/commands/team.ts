@@ -72,14 +72,7 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
   }
 
   const compute = (): CarryView => ({
-    // Sort ranking only surfaces net carriers — negative scores mean
-    // the player drags their teammates down on balance, which isn't
-    // really "who carries" info worth highlighting.
-    rows: getTeamCarryStats(steamIds).filter(
-      (r) =>
-        r.sharedMatches >= 3 &&
-        (r.premierSamples > 0 ? r.premierScore : r.proxyScore) > 0,
-    ),
+    rows: getTeamCarryStats(steamIds).filter((r) => r.sharedMatches >= 3),
     latest: getMostRecentMatchTime(steamIds),
   });
 
@@ -105,9 +98,16 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
         );
       });
 
+      // `-#` renders as Discord subtext (small, dimmed) — closest thing
+      // to a tooltip inline. Explains the sign of the score once so we
+      // don't have to annotate every row.
+      const note = "-# Positive = net carry, negative = net drag vs team mean.";
+
       const e = embed()
         .setTitle("Team Carry Rankings")
-        .setDescription(lines.join("\n") + freshnessSuffix(latest, "last match"));
+        .setDescription(
+          `${lines.join("\n")}\n\n${note}${freshnessSuffix(latest, "last match")}`,
+        );
       return { embeds: [e] };
     },
     missingMessage: "Not enough shared matches yet to rank carries (need 3+ per pair).",

@@ -60,27 +60,32 @@ export const execute = wrapCommand(async (interaction) => {
     },
     render: ({ entries, latest }) => {
       const top = entries.slice(0, 10);
-      // Use plain numeric prefix (not rankPrefix medals) because the table
-      // runs up to 10 rows and mixing emoji medals with plain numbers
-      // misaligns the columns in a code block.
+      // Numeric prefix (not rankPrefix medals) so all rows stay aligned
+      // — emoji medals render wider than "N." and break the columns.
+      const fmtNum = (n: number, w: number) => n.toFixed(1).padStart(w, " ");
+      const header = `${pad("", 4)}${pad("Name", 14)}    HE   Thr   Mol   Smk`;
       const rows = top.map((e, i) => {
-        const prefix = pad(`${i + 1}.`, 3);
-        const ff = e.heFriendsDamage > 1 ? `  FF ${e.heFriendsDamage.toFixed(1)}` : "";
         return (
-          `${prefix}${pad(e.name, 16)} ` +
-          `HE ${pad(e.heDamage.toFixed(1), 5)} ` +
-          `thrown ${pad(e.heThrown.toFixed(1), 4)} ` +
-          `moly ${pad(e.mollies.toFixed(1), 4)} ` +
-          `smk ${e.smokes.toFixed(1)}` +
-          ff
+          `${pad(`${i + 1}.`, 4)}${pad(e.name, 14)}` +
+          ` ${fmtNum(e.heDamage, 5)}` +
+          ` ${fmtNum(e.heThrown, 5)}` +
+          ` ${fmtNum(e.mollies, 5)}` +
+          ` ${fmtNum(e.smokes, 5)}`
         );
       });
-      const header =
-        "Per-match averages. HE = damage dealt to enemies. FF = friendly-fire damage.";
+      // FF-heavy players footnoted below the table so the main grid
+      // stays mobile-width — anything in the inline row pushed it over.
+      const ffNotes = top
+        .filter((e) => e.heFriendsDamage > 1)
+        .map((e) => `${e.name}: ${e.heFriendsDamage.toFixed(1)}`);
+      const footer = ffNotes.length
+        ? `\n-# Friendly-fire HE damage: ${ffNotes.join(", ")}`
+        : "";
+      const headerText = "-# Per-match averages. HE = damage dealt to enemies.";
       const e = embed("kobe")
         .setTitle("Grenade Mastery (Last 30)")
         .setDescription(
-          `${header}\n${table(rows)}${freshnessSuffix(latest, "last match")}`,
+          `${headerText}\n${table([header, ...rows])}${footer}${freshnessSuffix(latest, "last match")}`,
         );
       return { embeds: [e] };
     },

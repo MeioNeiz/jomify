@@ -160,6 +160,29 @@ export interface TeamCarryRow {
 export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
   if (guildSteamIds.length < 2) return [];
 
+  // Unique-match counts per player: distinct matches each player
+  // appeared in alongside ANY other tracked teammate on the same team.
+  // Needed because summing per-viewer sharedMatches below would
+  // double-count every match with >=3 tracked players on the team.
+  const placeholders = guildSteamIds.map(() => "?").join(",");
+  const uniqueRows = sqlite
+    .query(
+      `SELECT ms.steam_id AS steamId, COUNT(DISTINCT ms.match_id) AS unique_matches
+       FROM match_stats ms
+       JOIN match_stats other
+         ON other.match_id = ms.match_id
+        AND other.team_number = ms.team_number
+        AND other.steam_id != ms.steam_id
+        AND other.steam_id IN (${placeholders})
+       WHERE ms.steam_id IN (${placeholders})
+       GROUP BY ms.steam_id`,
+    )
+    .all(...guildSteamIds, ...guildSteamIds) as {
+    steamId: string;
+    unique_matches: number;
+  }[];
+  const uniqueByPlayer = new Map(uniqueRows.map((r) => [r.steamId, r.unique_matches]));
+
   const byPlayer = new Map<string, TeamCarryRow>();
   for (const viewerId of guildSteamIds) {
     const rows = getCarryStats(viewerId);
@@ -177,12 +200,16 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
       };
       entry.proxyScore += r.proxyScore;
       entry.premierScore += r.premierScore;
-      entry.sharedMatches += r.sharedMatches;
       entry.premierSamples += r.premierSamples;
       entry.partnerCount += 1;
       entry.name = r.teammateName;
       byPlayer.set(r.teammateSteamId, entry);
     }
+  }
+
+  // Replace the double-counted running total with the true unique count.
+  for (const [steamId, entry] of byPlayer) {
+    entry.sharedMatches = uniqueByPlayer.get(steamId) ?? 0;
   }
 
   return [...byPlayer.values()].sort((a, b) => b.proxyScore - a.proxyScore);
