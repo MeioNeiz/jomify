@@ -62,6 +62,21 @@ describe("tracked players", () => {
     addTrackedPlayer("guild-a", STEAM);
     expect(getTrackedPlayers("guild-b")).toEqual([]);
   });
+
+  test("rejects non-steam64 values — guards against vanity-URL regression", () => {
+    // The assertSteam64 check here stops a future caller that forgot
+    // to go through resolveSteamId from silently persisting junk,
+    // which is exactly how /carry and /suspects started returning
+    // empty for four users.
+    expect(() => addTrackedPlayer(GUILD, "laryisland")).toThrow(/Steam64/);
+    expect(() => addTrackedPlayer(GUILD, "http://steamcommunity.com/id/x")).toThrow(
+      /Steam64/,
+    );
+    // Clan/group IDs start with 103582791, not 7656119 — also rejected.
+    expect(() => addTrackedPlayer(GUILD, "10358279142952140")).toThrow(/Steam64/);
+    // Exactly 17 digits but wrong prefix.
+    expect(() => addTrackedPlayer(GUILD, "12345678901234567")).toThrow(/Steam64/);
+  });
 });
 
 describe("linked accounts", () => {
@@ -85,6 +100,16 @@ describe("linked accounts", () => {
     const newSteam = "76561198000000002";
     linkAccount(DISCORD, newSteam);
     expect(getSteamId(DISCORD)).toBe(newSteam);
+  });
+
+  test("rejects non-steam64 values — guards against vanity-URL regression", () => {
+    // linkAccount is the other user-input write path for steam_ids.
+    // This test guarantees that bypassing resolveSteamId (from /link
+    // or any future command) fails loudly rather than silently storing
+    // a vanity string that would later read back as junk.
+    expect(() => linkAccount(DISCORD, "laryisland")).toThrow(/Steam64/);
+    expect(() => linkAccount(DISCORD, "Axeman2202")).toThrow(/Steam64/);
+    expect(() => linkAccount(DISCORD, "")).toThrow(/Steam64/);
   });
 });
 

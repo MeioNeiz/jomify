@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import db from "../db.js";
 import { trackedPlayers } from "../schema.js";
+import { assertSteam64 } from "./validate.js";
 
 export function getTrackedPlayers(guildId: string): string[] {
   return db
@@ -29,6 +30,7 @@ export function getGuildsForSteamId(steamId: string): string[] {
 }
 
 export function addTrackedPlayer(guildId: string, steamId: string): void {
+  assertSteam64(steamId);
   db.insert(trackedPlayers).values({ guildId, steamId }).onConflictDoNothing().run();
 }
 

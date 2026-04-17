@@ -1,6 +1,7 @@
 import { eq, or } from "drizzle-orm";
 import db from "../db.js";
 import { linkedAccounts } from "../schema.js";
+import { assertSteam64 } from "./validate.js";
 
 export type LinkResult = {
   previousSteamId: string | null;
@@ -9,6 +10,7 @@ export type LinkResult = {
 
 /** Always links, overwriting any prior link on either side. */
 export function linkAccount(discordId: string, steamId: string): LinkResult {
+  assertSteam64(steamId);
   return db.transaction((tx) => {
     const prevForDiscord = tx
       .select({ steamId: linkedAccounts.steamId })
