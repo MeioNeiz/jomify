@@ -54,18 +54,34 @@ function computeView(steamIds: string[]): View {
   };
 }
 
-function formatBest(b: BestFlashGame): string {
+const MEDALS = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
+
+function addBestFlashFields(embed: EmbedBuilder, b: BestFlashGame): void {
   const outcome = outcomeTag(b.roundsWon ?? 0, b.roundsLost ?? 0);
-  const kd = kdRatio(b.kills, b.deaths);
   const duration = b.avgBlindDuration.toFixed(1);
-  const rating = b.rating != null ? ` \u2022 ${b.rating.toFixed(2)} rating` : "";
-  return (
-    `\u{1F3C6} **Best flash game (last 20d)**: **${b.name}** on **${b.mapName}** ` +
-    `\u2014 ${outcome}, ${relTime(b.finishedAt)}\n` +
-    `   \u{1F4A5} ${b.enemyFlashes} enemy (${duration}s avg) ` +
-    `\u2022 \u26A1 ${b.leadingToKill} kills \u2022 \u{1F91D} ${b.teamFlashes} team\n` +
-    `   ${b.kills}/${b.deaths}/${b.assists} KDA \u2022 ${kd} KD \u2022 ` +
-    `${Math.round(b.dpr)} ADR${rating}`
+  embed.addFields(
+    {
+      name: "\u{1F3C6} Best flash game (last 20d)",
+      value: `**${b.name}** on **${b.mapName}**\n${outcome}   ${relTime(b.finishedAt)}`,
+      inline: false,
+    },
+    {
+      name: "Flashes",
+      value:
+        `\u{1F4A5} enemies hit: **${b.enemyFlashes}** (${duration}s avg)\n` +
+        `\u26A1 kills: **${b.leadingToKill}**\n` +
+        `\u{1F91D} team hits: **${b.teamFlashes}**`,
+      inline: true,
+    },
+    {
+      name: "Game",
+      value:
+        `${b.kills}/${b.deaths}/${b.assists} KDA\n` +
+        `${kdRatio(b.kills, b.deaths)} K/D\n` +
+        `${Math.round(b.dpr)} ADR` +
+        (b.rating != null ? `\n${b.rating.toFixed(2)} rating` : ""),
+      inline: true,
+    },
   );
 }
 
@@ -85,26 +101,24 @@ export const execute = wrapCommand(async (interaction) => {
       return computeView(steamIds);
     },
     render: ({ entries, best, latest }) => {
-      const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-      const lines = entries.map((e, i) => {
-        const ratio = e.enemyRate > 0 ? (e.teamRate / e.enemyRate).toFixed(2) : "\u221E";
+      const top = entries.slice(0, 3);
+      const lines = top.map((e, i) => {
+        const medal = MEDALS[i] ?? `${i + 1}.`;
         return (
-          `${i + 1}. **${e.name}** \u2014 ` +
-          `\u{1f91d} ${pct(e.teamRate)} ` +
-          `\u{1f4a5} ${pct(e.enemyRate)} ` +
-          `(${ratio}x) \u2022 ${e.thrown.toFixed(1)}/match`
+          `${medal} **${e.name}** \u2014 ` +
+          `\u{1F91D} ${e.teamRate.toFixed(2)}   ` +
+          `\u{1F4A5} ${e.enemyRate.toFixed(2)}   ` +
+          `${e.thrown.toFixed(1)}/match`
         );
       });
-      const sections = [
-        "Per-flashbang rate \u2014 " +
-          "\u{1f91d} = hits teammates | \u{1f4a5} = hits enemies\n\n" +
-          lines.join("\n"),
-      ];
-      if (best) sections.push(formatBest(best));
+      const header =
+        "Per-flashbang rate \u2014 1.00 means one hit per flash thrown\n" +
+        "\u{1F91D} teammates   \u{1F4A5} enemies";
       const embed = new EmbedBuilder()
         .setTitle("Flashbang Shame (last 30)")
         .setColor(0xffff00)
-        .setDescription(sections.join("\n\n") + freshnessSuffix(latest));
+        .setDescription(`${header}\n\n${lines.join("\n")}${freshnessSuffix(latest)}`);
+      if (best) addBestFlashFields(embed, best);
       return { embeds: [embed] };
     },
     missingMessage: "No match data yet.",
