@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
-import { freshnessSuffix, kdRatio, outcomeTag } from "../helpers.js";
+import { freshnessSuffix, outcomeTag } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import { getPlayerHistory, type HistoryRow } from "../store.js";
 import { embed, pad, table } from "../ui.js";
