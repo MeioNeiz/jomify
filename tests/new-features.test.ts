@@ -816,6 +816,42 @@ describe("carry attribution", () => {
     expect(dong!.proxyScore).toBeGreaterThan(0);
     expect(ranks[0]!.steamId).toBe(DONG);
   });
+
+  test("sharedMatches reports unique matches, not pair-occurrences", () => {
+    // Three tracked players on the same team in all three matches.
+    // The old (buggy) code summed per-viewer counts, so each player
+    // showed sharedMatches = 2 per match × 3 matches = 6. The correct
+    // value is 3 — distinct match ids each player was in.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0 },
+        { steamId: DONG, team: 2, lr: 0 },
+        { steamId: CHAR, team: 2, lr: 0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m2", "2026-01-02T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0 },
+        { steamId: DONG, team: 2, lr: 0 },
+        { steamId: CHAR, team: 2, lr: 0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m3", "2026-01-03T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0 },
+        { steamId: DONG, team: 2, lr: 0 },
+        { steamId: CHAR, team: 2, lr: 0 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const ranks = getTeamCarryStats([JOM, DONG, CHAR]);
+    for (const r of ranks) expect(r.sharedMatches).toBe(3);
+  });
 });
 
 // ── /best ──
