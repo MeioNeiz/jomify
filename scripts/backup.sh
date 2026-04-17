@@ -15,7 +15,6 @@ BACKUP_REPO="${JOMIFY_BACKUP_REPO:-MeioNeiz/jomify-backups}"
 BACKUP_DIR="$HOME/jomify-backups"
 DB_PATH="$HOME/jomify/jomify.db"
 TOKEN_FILE="$HOME/.jomify-backup-pat"
-RETAIN_DAYS=30
 
 if [[ ! -f "$TOKEN_FILE" ]]; then
   echo "Missing $TOKEN_FILE — create a GitHub PAT and save it there." >&2
@@ -42,8 +41,48 @@ fi
 BACKUP_FILE="jomify-$(date -u +%F).db"
 sqlite3 "$DB_PATH" ".backup '$BACKUP_FILE'"
 
-# Prune anything older than RETAIN_DAYS.
-find . -maxdepth 1 -name 'jomify-*.db' -mtime +"$RETAIN_DAYS" -delete
+# Retention policy (tapered GFS-style):
+#   0–7 days   : keep every daily (~7 files)
+#   8–90 days  : keep one per ISO week (~12 files)
+#   91–365 days: keep one per calendar month (~9 files)
+#   >365 days  : delete
+# Steady state: ~28 files ≈ 20 MB. Cheap in a private repo, plenty of
+# rollback granularity close to now, coarse history out to a year.
+WEEK_CAP_DAYS=90
+MONTH_CAP_DAYS=365
+declare -A week_kept
+declare -A month_kept
+NOW=$(date -u +%s)
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  date_str="${file##*/jomify-}"; date_str="${date_str%.db}"
+  age=$(( (NOW - $(date -u -d "$date_str" +%s)) / 86400 ))
+
+  if (( age <= 7 )); then
+    continue  # recent dailies — keep all
+  fi
+
+  if (( age > MONTH_CAP_DAYS )); then
+    rm -f "$file"
+    continue
+  fi
+
+  if (( age <= WEEK_CAP_DAYS )); then
+    week=$(date -u -d "$date_str" +%G-W%V)
+    if [[ -n "${week_kept[$week]:-}" ]]; then
+      rm -f "$file"
+    else
+      week_kept[$week]="$file"
+    fi
+  else
+    month=$(date -u -d "$date_str" +%Y-%m)
+    if [[ -n "${month_kept[$month]:-}" ]]; then
+      rm -f "$file"
+    else
+      month_kept[$month]="$file"
+    fi
+  fi
+done < <(ls -1 jomify-*.db 2>/dev/null | sort -r)
 
 git add -A
 if git diff --cached --quiet; then
