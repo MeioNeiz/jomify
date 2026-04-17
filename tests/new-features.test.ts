@@ -4,6 +4,7 @@ import type { LeetifyMatchDetails } from "../src/leetify/types.js";
 import {
   getAllGuildIds,
   getApiUsageToday,
+  getBestMatch,
   getHeadToHead,
   getPlayerMapStats,
   getPlayerMatchStats,
@@ -690,5 +691,79 @@ describe("carry attribution", () => {
     const dong = ranks.find((r) => r.steamId === DONG);
     expect(dong!.proxyScore).toBeGreaterThan(0);
     expect(ranks[0]!.steamId).toBe(DONG);
+  });
+});
+
+// ── /best ──
+
+describe("getBestMatch", () => {
+  function seedRecent() {
+    // seedMatches() hardcodes finished_at to 2026-01-01. Our /best
+    // window queries "now − N days", so rewrite finished_at to today
+    // after seeding so the rows fall inside any test window.
+    seedMatches();
+    db.run("UPDATE matches SET finished_at = datetime('now')");
+  }
+
+  test("returns null when no matches in window", () => {
+    seedMatches(); // leaves 2026-01-01 timestamps
+    expect(getBestMatch([STEAM1, STEAM2], "rating", 7)).toBeNull();
+  });
+
+  test("returns null when no tracked players", () => {
+    expect(getBestMatch([], "kills", 30)).toBeNull();
+  });
+
+  test("picks match with highest kills among tracked players", () => {
+    seedRecent();
+    // STEAM1 kills: m1=20, m2=15, m3=22, m4=10 → m3 wins
+    const best = getBestMatch([STEAM1], "kills", 30);
+    expect(best?.matchId).toBe("m3");
+    expect(best?.statValue).toBe(22);
+    expect(best?.name).toBe("Player_0001");
+  });
+
+  test("picks best across multiple tracked players", () => {
+    seedRecent();
+    // STEAM2 kills: m1=18, m2=12, m3=19, m4=14
+    // STEAM1 best=22, STEAM2 best=19 → STEAM1's m3
+    const best = getBestMatch([STEAM1, STEAM2], "kills", 30);
+    expect(best?.steamId).toBe(STEAM1);
+    expect(best?.statValue).toBe(22);
+  });
+
+  test("respects the days window", () => {
+    seedMatches(); // all at 2026-01-01
+    db.run("UPDATE matches SET finished_at = datetime('now', '-200 days')");
+    expect(getBestMatch([STEAM1], "kills", 30)).toBeNull();
+    expect(getBestMatch([STEAM1], "kills", 365)?.matchId).toBe("m3");
+  });
+
+  test("rating stat picks highest leetify_rating", () => {
+    seedRecent();
+    // All seeded matches share leetify_rating=0.05 → tiebreak by
+    // finished_at DESC. All tie on time too, so just check it returns
+    // a match with the expected rating.
+    const best = getBestMatch([STEAM1], "rating", 30);
+    expect(best?.rating).toBeCloseTo(0.05, 2);
+  });
+
+  test("multikill stat orders lexicographically by tier", () => {
+    seedRecent();
+    // Boost m2's multikills so it's the single best despite kills=15
+    db.run("UPDATE match_stats SET multi5k = 1 WHERE match_id = 'm2' AND steam_id = ?", [
+      STEAM1,
+    ]);
+    const best = getBestMatch([STEAM1], "multikill", 30);
+    expect(best?.matchId).toBe("m2");
+    expect(best?.multi5k).toBe(1);
+  });
+
+  test("positioning is derived from rounds_count - deaths", () => {
+    seedRecent();
+    // STEAM1 deaths: m1=15, m2=18, m3=14, m4=20; all rounds_count=25
+    // Survival%: m1=40, m2=28, m3=44, m4=20 → m3 wins
+    const best = getBestMatch([STEAM1], "positioning", 30);
+    expect(best?.matchId).toBe("m3");
   });
 });

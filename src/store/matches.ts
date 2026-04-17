@@ -114,48 +114,132 @@ function computeFlashScore(p: LeetifyPlayerStats): number | null {
   return (enemies * duration + 2 * leading + assists - 2 * team) / p.rounds_count;
 }
 
-export interface BestFlashGame {
+export type BestStatKey =
+  | "rating"
+  | "kills"
+  | "kd"
+  | "adr"
+  | "hs"
+  | "aim"
+  | "positioning"
+  | "utility"
+  | "clutch"
+  | "flash"
+  | "multikill";
+
+// Per-stat config. `sortExpr` is a SQL expression ranked DESC to pick
+// the best match. Leetify doesn't publish per-match aim/positioning/
+// utility/clutch breakdowns in their public API, so the composite
+// scores below are documented approximations derived from fields we
+// already store.
+export const BEST_STATS: Record<
+  BestStatKey,
+  { label: string; sortExpr: string; format: (v: number) => string }
+> = {
+  rating: {
+    label: "Leetify rating",
+    sortExpr: "ms.leetify_rating",
+    format: (v) => v.toFixed(2),
+  },
+  kills: {
+    label: "Kills",
+    sortExpr: "ms.total_kills",
+    format: (v) => v.toFixed(0),
+  },
+  kd: {
+    label: "K/D ratio",
+    sortExpr: "ms.kd_ratio",
+    format: (v) => v.toFixed(2),
+  },
+  adr: { label: "ADR", sortExpr: "ms.dpr", format: (v) => v.toFixed(0) },
+  hs: {
+    label: "Headshot accuracy",
+    sortExpr: "ms.accuracy_head",
+    format: (v) => `${v.toFixed(1)}%`,
+  },
+  // Composite: head accuracy dominates, spray contributes half, preaim
+  // penalises (preaim = cm of crosshair drift before firing, lower is
+  // better). Dimensionless score — only useful ordinally.
+  aim: {
+    label: "Aim score",
+    sortExpr:
+      "(COALESCE(ms.accuracy_head, 0)" +
+      " + 0.5 * COALESCE(ms.spray_accuracy, 0)" +
+      " - 0.3 * COALESCE(CAST(json_extract(ms.raw, '$.preaim') AS REAL), 0))",
+    format: (v) => v.toFixed(1),
+  },
+  // % of rounds survived. Proxy for positioning/trade discipline.
+  positioning: {
+    label: "Survival %",
+    sortExpr:
+      "((1.0 - CAST(ms.total_deaths AS REAL) / NULLIF(ms.rounds_count, 0)) * 100)",
+    format: (v) => `${v.toFixed(1)}%`,
+  },
+  // Flash impact + HE damage to enemies, penalised for friendly HE
+  // damage. Covers most of Leetify's "utility" concept.
+  utility: {
+    label: "Utility score",
+    sortExpr:
+      "(COALESCE(ms.flash_score, 0)" +
+      " + 0.5 * COALESCE(CAST(json_extract(ms.raw, '$.he_foes_damage_avg') AS REAL), 0)" +
+      " - 0.3 * COALESCE(CAST(json_extract(ms.raw, '$.he_friends_damage_avg') AS REAL), 0))",
+    format: (v) => v.toFixed(2),
+  },
+  // Leetify doesn't expose clutch rounds via match API, so we proxy
+  // with weighted multikills — biggest-impact moments in the match.
+  clutch: {
+    label: "Clutch score",
+    sortExpr:
+      "(COALESCE(ms.multi5k, 0) * 10 + COALESCE(ms.multi4k, 0) * 5 + COALESCE(ms.multi3k, 0) * 3)",
+    format: (v) => v.toFixed(0),
+  },
+  flash: {
+    label: "Flash impact",
+    sortExpr: "ms.flash_score",
+    format: (v) => v.toFixed(2),
+  },
+  // Lexicographic on tier — 5k beats any 4k, 4k beats any 3k, etc.
+  multikill: {
+    label: "Biggest multikill",
+    sortExpr:
+      "(COALESCE(ms.multi5k, 0) * 100 + COALESCE(ms.multi4k, 0) * 10 + COALESCE(ms.multi3k, 0))",
+    format: (v) => v.toFixed(0),
+  },
+};
+
+export interface BestMatch {
   steamId: string;
   name: string;
   matchId: string;
   mapName: string;
   finishedAt: string;
-  flashScore: number;
-  enemyFlashes: number;
-  teamFlashes: number;
-  avgBlindDuration: number;
-  leadingToKill: number;
-  flashAssist: number;
-  roundsWon: number;
-  roundsLost: number;
+  roundsWon: number | null;
+  roundsLost: number | null;
   kills: number;
   deaths: number;
   assists: number;
   dpr: number;
   rating: number | null;
+  multi3k: number | null;
+  multi4k: number | null;
+  multi5k: number | null;
+  statValue: number;
 }
 
-/** Highest flash_score among given players within the last `sinceDays`. */
-export function getBestFlashGame(
+export function getBestMatch(
   steamIds: string[],
-  sinceDays = 20,
-): BestFlashGame | null {
+  stat: BestStatKey,
+  days: number,
+): BestMatch | null {
   if (!steamIds.length) return null;
   const placeholders = steamIds.map(() => "?").join(",");
+  const { sortExpr } = BEST_STATS[stat];
   const row = sqlite
     .query(
       `SELECT
          ms.match_id AS matchId,
          ms.steam_id AS steamId,
          ms.name AS name,
-         ms.flash_score AS flashScore,
-         ms.flashbang_hit_foe AS enemyFlashes,
-         ms.flashbang_hit_friend AS teamFlashes,
-         CAST(json_extract(ms.raw, '$.flashbang_hit_foe_avg_duration') AS REAL)
-           AS avgBlindDuration,
-         CAST(json_extract(ms.raw, '$.flashbang_leading_to_kill') AS INTEGER)
-           AS leadingToKill,
-         CAST(json_extract(ms.raw, '$.flash_assist') AS INTEGER) AS flashAssist,
          ms.rounds_won AS roundsWon,
          ms.rounds_lost AS roundsLost,
          ms.total_kills AS kills,
@@ -163,17 +247,21 @@ export function getBestFlashGame(
          ms.total_assists AS assists,
          ms.dpr AS dpr,
          ms.leetify_rating AS rating,
+         ms.multi3k AS multi3k,
+         ms.multi4k AS multi4k,
+         ms.multi5k AS multi5k,
          m.map_name AS mapName,
-         m.finished_at AS finishedAt
+         m.finished_at AS finishedAt,
+         ${sortExpr} AS statValue
        FROM match_stats ms
        JOIN matches m ON m.match_id = ms.match_id
        WHERE ms.steam_id IN (${placeholders})
-         AND ms.flash_score IS NOT NULL
+         AND (${sortExpr}) IS NOT NULL
          AND m.finished_at >= datetime('now', '-' || ? || ' days')
-       ORDER BY ms.flash_score DESC
+       ORDER BY statValue DESC, m.finished_at DESC
        LIMIT 1`,
     )
-    .get(...steamIds, sinceDays) as BestFlashGame | null;
+    .get(...steamIds, days) as BestMatch | null;
   return row;
 }
 

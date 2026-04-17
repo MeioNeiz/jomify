@@ -45,8 +45,10 @@ export {
   type MapStats,
 } from "./maps.js";
 export {
-  type BestFlashGame,
-  getBestFlashGame,
+  BEST_STATS,
+  type BestMatch,
+  type BestStatKey,
+  getBestMatch,
   getMostRecentMatchTime,
   getPlayerMatchStats,
   getPlayerStatAverages,

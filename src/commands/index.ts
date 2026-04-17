@@ -4,6 +4,7 @@ import type {
   SlashCommandOptionsOnlyBuilder,
   SlashCommandSubcommandsOnlyBuilder,
 } from "discord.js";
+import * as best from "./best.js";
 import * as carry from "./carry.js";
 import * as compare from "./compare.js";
 import * as flash from "./flash.js";
@@ -46,4 +47,5 @@ export const commands: [string, Command][] = [
   ["kobe", kobe],
   ["team", team],
   ["carry", carry],
+  ["best", best],
 ];
