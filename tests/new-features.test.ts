@@ -927,3 +927,107 @@ describe("getBestMatch", () => {
     expect(best?.matchId).toBe("m3");
   });
 });
+
+// ── /suspects ──
+
+import { getEncounters } from "../src/store.js";
+
+describe("getEncounters", () => {
+  const TARGET = "76561198000000100";
+  const MATE = "76561198000000101";
+  const FOE = "76561198000000102";
+
+  test("empty for a player with no matches", () => {
+    expect(getEncounters(TARGET, 7)).toEqual([]);
+  });
+
+  test("returns teammates with 'with' and opponents with 'against'", () => {
+    saveMatchDetails(
+      makeMatch("enc-1", "de_dust2", 13, 7, [
+        { steamId: TARGET, team: 2, kills: 20, deaths: 15 },
+        { steamId: MATE, team: 2, kills: 18, deaths: 12 },
+        { steamId: FOE, team: 3, kills: 10, deaths: 20 },
+      ]),
+    );
+    // seeded finished_at is 2026-01-01; push into the window.
+    db.run("UPDATE matches SET finished_at = datetime('now')");
+
+    const rows = getEncounters(TARGET, 7);
+    expect(rows).toHaveLength(2);
+
+    const mate = rows.find((r) => r.otherSteamId === MATE);
+    const foe = rows.find((r) => r.otherSteamId === FOE);
+    expect(mate?.relationship).toBe("with");
+    expect(foe?.relationship).toBe("against");
+    expect(mate?.matchId).toBe("enc-1");
+    expect(mate?.otherName).toBe("Player_0101");
+  });
+
+  test("respects the days window", () => {
+    saveMatchDetails(
+      makeMatch("old", "de_dust2", 13, 7, [
+        { steamId: TARGET, team: 2, kills: 20, deaths: 15 },
+        { steamId: MATE, team: 2, kills: 18, deaths: 12 },
+      ]),
+    );
+    db.run("UPDATE matches SET finished_at = datetime('now', '-30 days')");
+    expect(getEncounters(TARGET, 7)).toHaveLength(0);
+    expect(getEncounters(TARGET, 60)).toHaveLength(1);
+  });
+
+  test("one row per (match, other player)", () => {
+    saveMatchDetails(
+      makeMatch("enc-1", "de_dust2", 13, 7, [
+        { steamId: TARGET, team: 2, kills: 20, deaths: 15 },
+        { steamId: MATE, team: 2, kills: 18, deaths: 12 },
+      ]),
+    );
+    saveMatchDetails(
+      makeMatch("enc-2", "de_mirage", 13, 7, [
+        { steamId: TARGET, team: 2, kills: 20, deaths: 15 },
+        { steamId: MATE, team: 3, kills: 18, deaths: 12 },
+      ]),
+    );
+    db.run("UPDATE matches SET finished_at = datetime('now')");
+
+    const rows = getEncounters(TARGET, 7).filter((r) => r.otherSteamId === MATE);
+    expect(rows).toHaveLength(2);
+    const relations = rows.map((r) => r.relationship).sort();
+    expect(relations).toEqual(["against", "with"]);
+  });
+
+  test("surfaces a sus-looking player across their recent history", () => {
+    // Seed one encounter match between TARGET and a cheater-like FOE.
+    saveMatchDetails(
+      makeMatch("enc-cheat", "de_dust2", 13, 7, [
+        { steamId: TARGET, team: 2, kills: 18, deaths: 16 },
+        { steamId: FOE, team: 3, kills: 40, deaths: 3 },
+      ]),
+    );
+    // Seed 12 extra FOE-only matches with inhuman stats so analyseStats
+    // has >= MIN_MATCHES_FOR_ANALYSIS samples and flags them convincingly.
+    for (let i = 0; i < 12; i++) {
+      const m = makeMatch(`cheat-${i}`, "de_dust2", 16, 3, [
+        { steamId: FOE, team: 2, kills: 38, deaths: 4 },
+      ]);
+      const s = m.stats[0]!;
+      s.accuracy_head = 0.72;
+      s.accuracy_enemy_spotted = 0.55;
+      s.kd_ratio = 9.5;
+      s.dpr = 145;
+      s.reaction_time = 0.15;
+      saveMatchDetails(m);
+    }
+    db.run("UPDATE matches SET finished_at = datetime('now')");
+
+    // Target's only encounter is with FOE — confirm the store helper
+    // surfaces that encounter, which /suspects then runs analyseStats on.
+    const encounters = getEncounters(TARGET, 7);
+    expect(encounters.map((e) => e.otherSteamId)).toContain(FOE);
+
+    const foeHistory = getPlayerMatchStats(FOE, 30);
+    expect(foeHistory.length).toBeGreaterThanOrEqual(10);
+    const { score } = analyseStats(foeHistory.map((m) => m.raw));
+    expect(score).toBeGreaterThanOrEqual(4);
+  });
+});
