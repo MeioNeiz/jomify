@@ -15,7 +15,7 @@
 #   ./scripts/bot.sh --start               # start prod bot
 #   ./scripts/bot.sh --restart             # restart prod bot
 #   ./scripts/bot.sh --test-alert          # fire a /fail ping to Healthchecks
-#   ./scripts/bot.sh --backup-now          # run the daily DB backup immediately
+#   ./scripts/bot.sh --backup-now          # manual backup (auto-tagged with time)
 #   ./scripts/bot.sh --backup-now pre-foo  # ad-hoc backup tagged 'pre-foo'
 #   ./scripts/bot.sh --restore              # restore latest backup
 #   ./scripts/bot.sh --restore 2026-04-16   # restore a specific date
@@ -99,13 +99,12 @@ case "$ACTION" in
     '
     ;;
   backup-now)
-    if [[ -n "$BACKUP_TAG" ]]; then
-      # Tagged backup bypasses the systemd unit so the tag argument
-      # reaches backup.sh. Still runs on the VM.
-      ssh "$SSH_USER@$HOST" "cd ~/jomify && git pull --quiet && ./scripts/backup.sh '$BACKUP_TAG'"
-    else
-      ssh "$SSH_USER@$HOST" "sudo systemctl start jomify-backup.service && sudo journalctl -u jomify-backup -n 20 --no-pager -o cat"
-    fi
+    # Manual backups never overwrite the daily systemd snapshot
+    # (jomify-YYYY-MM-DD.db). If no tag was given, default to a
+    # timestamped one so each manual invocation is its own file.
+    TAG_ARG="${BACKUP_TAG:-manual-$(date -u +%H%M%S)}"
+    ssh "$SSH_USER@$HOST" \
+      "cd ~/jomify && git pull --quiet && ./scripts/backup.sh '$TAG_ARG'"
     ;;
   restore)
     # -t allocates a PTY so the restore script's "type yes" prompt works.
