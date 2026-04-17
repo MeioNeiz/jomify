@@ -817,6 +817,27 @@ describe("carry attribution", () => {
     expect(ranks[0]!.steamId).toBe(DONG);
   });
 
+  test("proxyScore counts each match once, not per tracked viewer", () => {
+    // Three tracked players on the same team, one match. Dong at +0.3
+    // over the team mean; Jom at 0; Char at -0.3. Dong's proxy should
+    // be +0.3 × outcomeWeight(1 for win) = 0.3, counted exactly once.
+    // The old buggy aggregator summed across viewers (Jom's view + Char's
+    // view) and produced 0.6 — inflating whoever played most with the
+    // rest of the squad.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0 },
+        { steamId: DONG, team: 2, lr: 0.3 },
+        { steamId: CHAR, team: 2, lr: -0.3 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    const ranks = getTeamCarryStats([JOM, DONG, CHAR]);
+    const dong = ranks.find((r) => r.steamId === DONG);
+    expect(dong!.proxyScore).toBeCloseTo(0.3, 2);
+  });
+
   test("sharedMatches reports unique matches, not pair-occurrences", () => {
     // Three tracked players on the same team in all three matches.
     // The old (buggy) code summed per-viewer counts, so each player
