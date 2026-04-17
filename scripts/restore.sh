@@ -30,17 +30,26 @@ else
     "https://${TOKEN}@github.com/${BACKUP_REPO}.git" main
 fi
 
-# Select the backup file.
+# Select the backup file. Older snapshots are gzipped to save repo
+# space — we accept either .db or .db.gz and decompress transparently.
 if [[ -z "$DATE" ]]; then
-  BACKUP_FILE="$(ls -1 "$BACKUP_DIR"/jomify-*.db 2>/dev/null | sort | tail -1)"
+  BACKUP_FILE="$(ls -1 "$BACKUP_DIR"/jomify-*.db "$BACKUP_DIR"/jomify-*.db.gz \
+    2>/dev/null | sort | tail -1)"
 else
-  BACKUP_FILE="$BACKUP_DIR/jomify-$DATE.db"
+  if [[ -f "$BACKUP_DIR/jomify-$DATE.db" ]]; then
+    BACKUP_FILE="$BACKUP_DIR/jomify-$DATE.db"
+  elif [[ -f "$BACKUP_DIR/jomify-$DATE.db.gz" ]]; then
+    BACKUP_FILE="$BACKUP_DIR/jomify-$DATE.db.gz"
+  else
+    BACKUP_FILE=""
+  fi
 fi
 
 if [[ -z "$BACKUP_FILE" || ! -f "$BACKUP_FILE" ]]; then
   echo "No backup found${DATE:+ for date $DATE}" >&2
   echo "Available:" >&2
-  ls -1 "$BACKUP_DIR"/jomify-*.db 2>/dev/null || echo "  (none)" >&2
+  ls -1 "$BACKUP_DIR"/jomify-*.db "$BACKUP_DIR"/jomify-*.db.gz 2>/dev/null \
+    || echo "  (none)" >&2
   exit 1
 fi
 
@@ -64,7 +73,11 @@ if [[ -f "$DB_PATH" ]]; then
   echo "Previous DB preserved at $SNAPSHOT"
 fi
 
-cp "$BACKUP_FILE" "$DB_PATH"
+if [[ "$BACKUP_FILE" == *.gz ]]; then
+  gunzip -c "$BACKUP_FILE" > "$DB_PATH"
+else
+  cp "$BACKUP_FILE" "$DB_PATH"
+fi
 
 echo "Starting bot..."
 sudo systemctl start jomify
