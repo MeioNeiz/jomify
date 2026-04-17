@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from "discord.js";
-import { leetifyEmbed } from "../helpers.js";
 import { getPlayerMapStats, type MapStats } from "../store.js";
+import { embed, pad, table } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
 
 const MIN_MATCHES = 3;
@@ -15,15 +15,13 @@ export const data = new SlashCommandBuilder()
 export function formatMapLines(stats: MapStats[]): string {
   const filtered = stats.filter((s) => s.total >= MIN_MATCHES);
   if (!filtered.length) return "";
-  return filtered
-    .map((s) => {
-      const name = s.mapName.replace(/^de_/, "");
-      return (
-        `**${name}** \u2014 ${s.wins}W-${s.losses}L ` +
-        `(${s.winRate.toFixed(0)}%) \u2022 ${s.total} games`
-      );
-    })
-    .join("\n");
+  const rows = filtered.map((s) => {
+    const name = s.mapName.replace(/^de_/, "");
+    const record = `${s.wins}W-${s.losses}L`;
+    const winRate = `${s.winRate.toFixed(0)}%`;
+    return `${pad(name, 12)} ${pad(record, 8)} ${pad(winRate, 5)} ${s.total} games`;
+  });
+  return table(rows);
 }
 
 export { MIN_MATCHES };
@@ -39,6 +37,6 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
   await interaction.editReply({
-    embeds: [leetifyEmbed(`${resolved.label}'s Map Win Rates`).setDescription(lines)],
+    embeds: [embed().setTitle(`${resolved.label}'s Map Win Rates`).setDescription(lines)],
   });
 });

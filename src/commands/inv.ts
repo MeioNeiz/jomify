@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from "discord.js";
-import { leetifyEmbed } from "../helpers.js";
 import { fetchInventorySummary, type InventoryItem } from "../inventory.js";
+import { embed } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -23,12 +23,13 @@ function formatItem(item: InventoryItem): string {
   // works on every client, shows the item image and live listings.
   const marketUrl = `https://steamcommunity.com/market/listings/730/${encodeURIComponent(item.name)}`;
   const namePart = `[${item.name}](${marketUrl})`;
-  const floatPart =
-    item.float != null
-      ? ` \u2022 float \`${item.float.toFixed(4)}\` (${wearName(item.float)})`
-      : "";
-  const seedPart = item.paintSeed != null ? ` \u2022 seed \`#${item.paintSeed}\`` : "";
-  return `\u2022 ${namePart} \u2014 £${item.price.toFixed(2)}${floatPart}${seedPart}`;
+  const extras: string[] = [];
+  if (item.float != null) {
+    extras.push(`float \`${item.float.toFixed(4)}\` (${wearName(item.float)})`);
+  }
+  if (item.paintSeed != null) extras.push(`seed \`#${item.paintSeed}\``);
+  const tail = extras.length ? ` (${extras.join(", ")})` : "";
+  return `- ${namePart} **£${item.price.toFixed(2)}**${tail}`;
 }
 
 export const execute = wrapCommand(async (interaction) => {
@@ -48,13 +49,22 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const lines = [
-    `**${inv.totalItems}** items \u2022 **£${inv.totalValue.toFixed(2)}** est. value`,
-    "",
-    ...inv.top5.map(formatItem),
-  ];
-  if (!inv.top5.length) lines.push("No priced items found.");
+  const e = embed()
+    .setTitle(`${label}'s Inventory`)
+    .addFields(
+      { name: "Items", value: `${inv.totalItems}`, inline: true },
+      { name: "Est. Value", value: `£${inv.totalValue.toFixed(2)}`, inline: true },
+    );
 
-  const embed = leetifyEmbed(`${label}'s Inventory`).setDescription(lines.join("\n"));
-  await interaction.editReply({ embeds: [embed] });
+  if (inv.top5.length) {
+    e.addFields({
+      name: "Top Items",
+      value: inv.top5.map(formatItem).join("\n"),
+      inline: false,
+    });
+  } else {
+    e.setDescription("No priced items found.");
+  }
+
+  await interaction.editReply({ embeds: [e] });
 });

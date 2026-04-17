@@ -1,4 +1,4 @@
-import { EmbedBuilder, SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder } from "discord.js";
 import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
 import { refreshPlayers } from "../refresh.js";
 import {
@@ -6,6 +6,7 @@ import {
   getPlayerMatchStats,
   getPlayerStatAverages,
 } from "../store.js";
+import { embed, pad, rankPrefix, table } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -41,8 +42,6 @@ function computeView(steamIds: string[]): View {
   return { entries, latest: getMostRecentMatchTime(steamIds) };
 }
 
-const MEDALS = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
-
 export const execute = wrapCommand(async (interaction) => {
   const guild = await requireTrackedGuild(interaction);
   if (!guild) return;
@@ -60,25 +59,26 @@ export const execute = wrapCommand(async (interaction) => {
     },
     render: ({ entries, latest }) => {
       const top = entries.slice(0, 3);
-      const lines = top.map((e, i) => {
-        const medal = MEDALS[i] ?? `${i + 1}.`;
+      // All rows are medals (top 3 only), so the emoji-width issue doesn't
+      // break column alignment here; numeric columns start at a fixed offset.
+      const rows = top.map((e, i) => {
+        const prefix = rankPrefix(i);
         return (
-          `${medal} **${e.name}** \u2014 ` +
-          `\u{1F91D} ${e.teamRate.toFixed(2)}   ` +
-          `\u{1F4A5} ${e.enemyRate.toFixed(2)}   ` +
+          `${prefix} ${pad(e.name, 16)} ` +
+          `team ${e.teamRate.toFixed(2)}   ` +
+          `enemy ${e.enemyRate.toFixed(2)}   ` +
           `${e.thrown.toFixed(1)}/match`
         );
       });
       const header =
-        "Per-flashbang rate \u2014 1.00 means one hit per flash thrown\n" +
-        "\u{1F91D} teammates   \u{1F4A5} enemies";
-      const embed = new EmbedBuilder()
-        .setTitle("Flashbang Shame (last 30)")
-        .setColor(0xffff00)
+        "Per-flashbang rate — 1.00 means one hit per flash thrown.\n" +
+        "Lower `team` is better, higher `enemy` is better.";
+      const e = embed("flash")
+        .setTitle("Flashbang Shame (Last 30)")
         .setDescription(
-          `${header}\n\n${lines.join("\n")}${freshnessSuffix(latest, "last match")}`,
+          `${header}\n${table(rows)}${freshnessSuffix(latest, "last match")}`,
         );
-      return { embeds: [embed] };
+      return { embeds: [e] };
     },
     missingMessage: "No match data yet.",
   });

@@ -1,7 +1,8 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fmt, freshnessSuffix, leetifyEmbed } from "../helpers.js";
+import { fmt, freshnessSuffix } from "../helpers.js";
 import { getProfile } from "../leetify/client.js";
 import { getLatestSnapshot } from "../store.js";
+import { embed } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()
@@ -53,18 +54,20 @@ export const execute = wrapCommand(async (interaction) => {
       };
     },
     render: (v, { cached, snapshotAt }) => {
-      const embed = leetifyEmbed(v.name).addFields(
-        { name: "Leetify Rating", value: fmt(v.leetify), inline: true },
-        { name: "Aim", value: fmt(v.aim), inline: true },
-        { name: "Positioning", value: fmt(v.positioning), inline: true },
-        { name: "Utility", value: fmt(v.utility), inline: true },
-        { name: "Clutch", value: fmt(v.clutch, 2), inline: true },
-        { name: "Premier", value: v.premier?.toLocaleString() ?? "N/A", inline: true },
-      );
+      const e = embed()
+        .setTitle(v.name)
+        .addFields(
+          { name: "Leetify Rating", value: fmt(v.leetify), inline: true },
+          { name: "Premier", value: v.premier?.toLocaleString() ?? "N/A", inline: true },
+          { name: "Aim", value: fmt(v.aim), inline: true },
+          { name: "Positioning", value: fmt(v.positioning), inline: true },
+          { name: "Utility", value: fmt(v.utility), inline: true },
+          { name: "Clutch", value: fmt(v.clutch, 2), inline: true },
+        );
       if (cached) {
-        embed.setDescription(freshnessSuffix(snapshotAt, "snapshot from").trim());
+        e.setDescription(freshnessSuffix(snapshotAt, "snapshot from").trim());
       }
-      return { embeds: [embed] };
+      return { embeds: [e] };
     },
   });
 });

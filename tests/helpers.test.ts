@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BRAND_COLOUR, fmt, requireGuild } from "../src/helpers.js";
+import { fmt, requireGuild } from "../src/helpers.js";
+import { COLOURS } from "../src/ui.js";
 
 describe("fmt", () => {
   test("formats number with default 1 decimal", () => {
@@ -42,8 +43,8 @@ describe("requireGuild", () => {
   });
 });
 
-describe("BRAND_COLOUR", () => {
+describe("COLOURS.brand", () => {
   test("is the correct hex value", () => {
-    expect(BRAND_COLOUR).toBe(0xf84982);
+    expect(COLOURS.brand).toBe(0xf84982);
   });
 });
