@@ -59,7 +59,7 @@ export interface LeetifyRecentMatch {
   data_source: string;
   outcome: string;
   rank: number;
-  rank_type: string;
+  rank_type: number | null;
   map_name: string;
   leetify_rating: number;
   score: [number, number];
@@ -140,16 +140,16 @@ export interface LeetifyPlayerStats {
   rounds_won: number;
   rounds_lost: number;
   total_hs_kills: number;
-  trade_kill_opportunities: number;
-  trade_kill_attempts: number;
-  trade_kills_succeed: number;
-  trade_kill_attempts_percentage: number;
-  trade_kills_success_percentage: number;
-  trade_kill_opportunities_per_round: number;
-  traded_death_opportunities: number;
-  traded_death_attempts: number;
-  traded_deaths_succeed: number;
-  traded_death_attempts_percentage: number;
-  traded_deaths_success_percentage: number;
-  traded_deaths_opportunities_per_round: number;
+  trade_kill_opportunities?: number | null;
+  trade_kill_attempts?: number | null;
+  trade_kills_succeed?: number | null;
+  trade_kill_attempts_percentage?: number | null;
+  trade_kills_success_percentage?: number | null;
+  trade_kill_opportunities_per_round?: number | null;
+  traded_death_opportunities?: number | null;
+  traded_death_attempts?: number | null;
+  traded_deaths_succeed?: number | null;
+  traded_death_attempts_percentage?: number | null;
+  traded_deaths_success_percentage?: number | null;
+  traded_deaths_opportunities_per_round?: number | null;
 }
