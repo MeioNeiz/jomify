@@ -15,7 +15,7 @@ const recentMatchSchema = z
     data_source: z.string(),
     outcome: z.string(),
     rank: z.number(),
-    rank_type: z.number().nullable(),
+    rank_type: z.number().nullable().optional(),
     map_name: z.string(),
     leetify_rating: z.number(),
     score: z.tuple([z.number(), z.number()]),
