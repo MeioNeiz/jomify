@@ -441,6 +441,61 @@ export function getMostRecentMatchTime(steamIds: string[]): string | null {
   return row?.latest ?? null;
 }
 
+export interface EncounterRow {
+  otherSteamId: string;
+  otherName: string;
+  matchId: string;
+  mapName: string;
+  finishedAt: string;
+  /** 'with' = same team as target, 'against' = opposing team. */
+  relationship: "with" | "against";
+}
+
+/**
+ * Every player (teammate or opponent) the target faced in matches
+ * finished within the last `days` days, one row per (match, player).
+ * Powers /suspects — drives per-encounter analysis downstream.
+ */
+export function getEncounters(steamId: string, days: number): EncounterRow[] {
+  const rows = sqlite
+    .query(
+      `SELECT
+         other.steam_id      AS otherSteamId,
+         other.name          AS otherName,
+         m.match_id          AS matchId,
+         m.map_name          AS mapName,
+         m.finished_at       AS finishedAt,
+         CASE
+           WHEN other.team_number = target.team_number THEN 'with'
+           ELSE 'against'
+         END                 AS relationship
+       FROM match_stats target
+       JOIN match_stats other
+         ON other.match_id = target.match_id
+        AND other.steam_id != target.steam_id
+       JOIN matches m ON m.match_id = target.match_id
+       WHERE target.steam_id = ?
+         AND m.finished_at >= datetime('now', '-' || ? || ' days')
+       ORDER BY m.finished_at DESC`,
+    )
+    .all(steamId, days) as Array<{
+    otherSteamId: string;
+    otherName: string | null;
+    matchId: string;
+    mapName: string;
+    finishedAt: string;
+    relationship: "with" | "against";
+  }>;
+  return rows.map((r) => ({
+    otherSteamId: r.otherSteamId,
+    otherName: r.otherName ?? r.otherSteamId,
+    matchId: r.matchId,
+    mapName: r.mapName,
+    finishedAt: r.finishedAt,
+    relationship: r.relationship,
+  }));
+}
+
 export interface PlayerAverages {
   avg_kills: number;
   avg_deaths: number;

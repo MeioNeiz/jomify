@@ -12,14 +12,17 @@ import * as floatCmd from "./float.js";
 import * as history from "./history.js";
 import * as importCmd from "./import.js";
 import * as inv from "./inv.js";
+import * as jomify from "./jomify.js";
 import * as kobe from "./kobe.js";
 import * as leaderboard from "./leaderboard.js";
 import * as link from "./link.js";
 import * as maps from "./maps.js";
+import * as say from "./say.js";
 import * as setchannel from "./setchannel.js";
 import * as shame from "./shame.js";
 import * as stats from "./stats.js";
 import * as sus from "./sus.js";
+import * as suspects from "./suspects.js";
 import * as team from "./team.js";
 import * as track from "./track.js";
 
@@ -42,6 +45,7 @@ export const commands: [string, Command][] = [
   ["setchannel", setchannel],
   ["import", importCmd],
   ["sus", sus],
+  ["suspects", suspects],
   ["inv", inv],
   ["maps", maps],
   ["float", floatCmd],
@@ -50,4 +54,6 @@ export const commands: [string, Command][] = [
   ["carry", carry],
   ["best", best],
   ["history", history],
+  ["say", say],
+  ["jomify", jomify],
 ];
