@@ -110,12 +110,11 @@ async function checkPlayer(client: Client, steamId: string) {
       details = await getMatchDetails(match.id);
       saveMatchDetails(details);
       // Stamp the per-match Premier snapshot so /carry can compute rating
-      // deltas. Leetify exposes this on the match itself as `rank` when
-      // `rank_type` is the premier system. If not, fall back to the
-      // profile's current premier (close enough when the match is the
-      // most recent one we're processing).
+      // deltas. Premier ratings are 4-5 digits; competitive ranks are 1-18.
+      // Leetify's `rank_type` is now an opaque numeric enum so we just
+      // gate on the magnitude of `rank` itself.
       const rank =
-        match.rank_type?.toLowerCase().includes("premier") && match.rank
+        typeof match.rank === "number" && match.rank >= 1000
           ? match.rank
           : currentPremier;
       if (rank != null) recordPremierAfter(match.id, steamId, rank);
