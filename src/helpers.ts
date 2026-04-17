@@ -1,7 +1,7 @@
 import { type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { getProfile } from "./leetify/client.js";
+import { getProfile, LeetifyNotFoundError } from "./leetify/client.js";
 import type { LeetifyProfile } from "./leetify/types.js";
-import { getTrackedPlayers } from "./store.js";
+import { getTrackedPlayers, isLeetifyUnknown } from "./store.js";
 
 export const BRAND_COLOUR = 0xf84982;
 
@@ -37,9 +37,15 @@ export async function fetchGuildProfiles(
 ): Promise<LeetifyProfile[] | null> {
   const players = getTrackedPlayers(guildId);
   if (!players.length) return null;
+  // Skip ids we already know aren't on Leetify — they'd just 404.
+  const targets = players.filter((id) => !isLeetifyUnknown(id));
+  const settled = await Promise.allSettled(targets.map((id) => getProfile(id)));
+  // 404s are non-fatal (the player isn't on Leetify); other errors still
+  // bubble so /leaderboard /stats /compare fall back to cached data.
   const profiles: LeetifyProfile[] = [];
-  for (const id of players) {
-    profiles.push(await getProfile(id));
+  for (const r of settled) {
+    if (r.status === "fulfilled") profiles.push(r.value);
+    else if (!(r.reason instanceof LeetifyNotFoundError)) throw r.reason;
   }
   return profiles;
 }
