@@ -49,12 +49,24 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const e = embed()
-    .setTitle(`${label}'s Inventory`)
-    .addFields(
-      { name: "Items", value: `${inv.totalItems}`, inline: true },
-      { name: "Est. Value", value: `£${inv.totalValue.toFixed(2)}`, inline: true },
+  const e = embed().setTitle(`${label}'s Inventory`);
+
+  if (inv.pricingSource === "disabled") {
+    e.addFields({
+      name: "Items",
+      value: `${inv.totalItems}`,
+      inline: true,
+    }).setDescription(
+      "-# Pricing disabled \u2014 set `CSFLOAT_API_KEY` in `.env` to enable value estimates.",
     );
+    await interaction.editReply({ embeds: [e] });
+    return;
+  }
+
+  e.addFields(
+    { name: "Items", value: `${inv.totalItems}`, inline: true },
+    { name: "Est. Value", value: `£${inv.totalValue.toFixed(2)}`, inline: true },
+  );
 
   if (inv.top5.length) {
     e.addFields({
@@ -64,6 +76,13 @@ export const execute = wrapCommand(async (interaction) => {
     });
   } else {
     e.setDescription("No priced items found.");
+  }
+
+  // Tag the provenance so users know when numbers are a fallback estimate.
+  if (inv.pricingSource === "steam") {
+    const existing = e.data.description;
+    const note = "-# Prices from Steam Market (CSFloat missed some items).";
+    e.setDescription(existing ? `${existing}\n${note}` : note);
   }
 
   await interaction.editReply({ embeds: [e] });

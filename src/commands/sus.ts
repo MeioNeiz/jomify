@@ -59,12 +59,17 @@ function buildBasicStats(steamId: string, inv: InvResult): string[] {
   }
 
   if (inv && inv !== "private" && inv !== "error") {
-    const top = inv.topItem
-      ? `, top: ${inv.topItem.name} (£${inv.topItem.price.toFixed(2)})`
-      : "";
-    lines.push(
-      `\u{1F4B0} Inventory **£${inv.totalValue.toFixed(2)}** (${inv.totalItems} items)${top}`,
-    );
+    if (inv.pricingSource === "disabled") {
+      lines.push(`\u{1F4B0} Inventory **${inv.totalItems} items** (pricing disabled)`);
+    } else {
+      const top = inv.topItem
+        ? `, top: ${inv.topItem.name} (£${inv.topItem.price.toFixed(2)})`
+        : "";
+      const tag = inv.pricingSource === "steam" ? " (Steam)" : "";
+      lines.push(
+        `\u{1F4B0} Inventory **£${inv.totalValue.toFixed(2)}**${tag} (${inv.totalItems} items)${top}`,
+      );
+    }
   } else if (inv === "private") {
     lines.push("\u{1F512} Inventory private");
   } else if (inv === "error") {
