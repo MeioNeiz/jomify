@@ -33,7 +33,7 @@ if [[ ! -d .git ]]; then
   git init -q -b main
   git config user.email "backup@jomify.local"
   git config user.name  "jomify-backup"
-  echo "*.db binary" > .gitattributes
+  printf '%s\n' '*.db binary' '*.db.gz binary' > .gitattributes
 fi
 
 # Consistent snapshot — safe with concurrent writers, uses SQLite's
@@ -55,7 +55,11 @@ declare -A month_kept
 NOW=$(date -u +%s)
 while IFS= read -r file; do
   [[ -z "$file" ]] && continue
-  date_str="${file##*/jomify-}"; date_str="${date_str%.db}"
+  # Strip both .db and .db.gz so date parsing works regardless of
+  # compression state.
+  date_str="${file##*/jomify-}"
+  date_str="${date_str%.db.gz}"
+  date_str="${date_str%.db}"
   age=$(( (NOW - $(date -u -d "$date_str" +%s)) / 86400 ))
 
   if (( age <= 7 )); then
@@ -82,7 +86,18 @@ while IFS= read -r file; do
       month_kept[$month]="$file"
     fi
   fi
-done < <(ls -1 jomify-*.db 2>/dev/null | sort -r)
+done < <(ls -1 jomify-*.db jomify-*.db.gz 2>/dev/null | sort -r)
+
+# Compress everything except today's snapshot. Today's stays raw so
+# restoring the latest is a straight `cp`. Older files rarely get
+# restored; gzip brings each one down ~3-5x. Uses -f to overwrite any
+# stale .gz artefacts left by a failed prior run.
+TODAY_FILE="jomify-$(date -u +%F).db"
+for file in jomify-*.db; do
+  [[ "$file" == "$TODAY_FILE" ]] && continue
+  [[ -f "$file" ]] || continue
+  gzip -f "$file"
+done
 
 git add -A
 if git diff --cached --quiet; then
