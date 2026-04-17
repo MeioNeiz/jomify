@@ -154,9 +154,7 @@ export const execute = wrapCommand(async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle(`${label} \u2014 ${verdict}`)
         .setColor(colour)
-        .setDescription(
-          sections.join("\n\n") + freshnessSuffix(latest, "most recent match"),
-        )
+        .setDescription(sections.join("\n\n") + freshnessSuffix(latest, "last match"))
         .setFooter({
           text: `${matchCount} matches \u2022 z-scores vs competitive avg \u2022 not definitive`,
         });

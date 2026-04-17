@@ -103,7 +103,7 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
       });
 
       const embed = leetifyEmbed("Team Carry Rankings").setDescription(
-        lines.join("\n") + freshnessSuffix(latest),
+        lines.join("\n") + freshnessSuffix(latest, "last match"),
       );
       return { embeds: [embed] };
     },
