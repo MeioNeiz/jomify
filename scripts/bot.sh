@@ -15,6 +15,7 @@
 #   ./scripts/bot.sh --start               # start prod bot
 #   ./scripts/bot.sh --restart             # restart prod bot
 #   ./scripts/bot.sh --test-alert          # fire a /fail ping to Healthchecks
+#   ./scripts/bot.sh --backup-now          # run the daily DB backup immediately
 #
 # Override host/user via env:
 #   JOMIFY_HOST=1.2.3.4 ./scripts/bot.sh
@@ -39,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --start) ACTION="start"; shift ;;
     --restart) ACTION="restart"; shift ;;
     --test-alert) ACTION="test-alert"; shift ;;
+    --backup-now) ACTION="backup-now"; shift ;;
     -n) N="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -75,6 +77,9 @@ case "$ACTION" in
       echo "Firing fail ping to $HEALTHCHECK_URL/fail..."
       curl -sS -X POST "$HEALTHCHECK_URL/fail" && echo
     '
+    ;;
+  backup-now)
+    ssh "$SSH_USER@$HOST" "sudo systemctl start jomify-backup.service && sudo journalctl -u jomify-backup -n 20 --no-pager -o cat"
     ;;
   "")
     CMD="sudo journalctl -u jomify $MODE -n $N $PRIORITY $SINCE -o cat | ~/.bun/bin/bunx pino-pretty"
