@@ -6,6 +6,7 @@ import {
   getApiUsageToday,
   getBestMatch,
   getHeadToHead,
+  getPlayerHistory,
   getPlayerMapStats,
   getPlayerMatchStats,
   getPlayerStatAverages,
@@ -525,6 +526,55 @@ describe("api usage tracking", () => {
     const profile = usage.find((u) => u.endpoint === "leetify:/v3/profile");
     expect(profile).toBeDefined();
     expect(profile!.count).toBe(2);
+  });
+});
+
+// ── /history ──
+
+describe("getPlayerHistory", () => {
+  test("returns empty for a steamId with no matches", () => {
+    expect(getPlayerHistory(STEAM1, 10)).toEqual([]);
+  });
+
+  test("returns rows newest first and respects the limit", () => {
+    seedMatches();
+    // 4 matches were seeded with identical finished_at — SQLite's ORDER BY
+    // is stable on match_id tiebreaker. We care here that LIMIT caps rows.
+    const rows = getPlayerHistory(STEAM1, 2);
+    expect(rows).toHaveLength(2);
+  });
+
+  test("premierDelta is the LAG difference over finished_at", () => {
+    seedMatches();
+    // Assign distinct timestamps so LAG can order them predictably.
+    db.run("UPDATE matches SET finished_at = '2026-04-01' WHERE match_id = 'm1'");
+    db.run("UPDATE matches SET finished_at = '2026-04-02' WHERE match_id = 'm2'");
+    db.run("UPDATE matches SET finished_at = '2026-04-03' WHERE match_id = 'm3'");
+    db.run("UPDATE matches SET finished_at = '2026-04-04' WHERE match_id = 'm4'");
+    db.run(
+      "UPDATE match_stats SET premier_after = 14000 WHERE match_id='m1' AND steam_id=?",
+      [STEAM1],
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 14080 WHERE match_id='m2' AND steam_id=?",
+      [STEAM1],
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 14040 WHERE match_id='m3' AND steam_id=?",
+      [STEAM1],
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 14150 WHERE match_id='m4' AND steam_id=?",
+      [STEAM1],
+    );
+
+    const rows = getPlayerHistory(STEAM1, 10);
+    // Returned newest first.
+    expect(rows.map((r) => r.matchId)).toEqual(["m4", "m3", "m2", "m1"]);
+    expect(rows[0].premierDelta).toBe(110); // 14150 - 14040
+    expect(rows[1].premierDelta).toBe(-40); // 14040 - 14080
+    expect(rows[2].premierDelta).toBe(80); // 14080 - 14000
+    expect(rows[3].premierDelta).toBeNull(); // no prior
   });
 });
 
