@@ -39,6 +39,17 @@ function checkCircuit() {
   }
 }
 
+/**
+ * True if the breaker tripped in the last CIRCUIT_COOLDOWN ms —
+ * consulted by presentation code to append a "Leetify unavailable"
+ * note to stale data, so users understand why `/leaderboard` etc.
+ * are showing an old snapshot.
+ */
+export function isLeetifyCircuitOpen(): boolean {
+  checkCircuit();
+  return circuitOpen;
+}
+
 export class LeetifyUnavailableError extends Error {
   constructor() {
     super("Leetify API unavailable");
