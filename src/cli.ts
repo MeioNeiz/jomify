@@ -1,4 +1,4 @@
-import type { EmbedBuilder } from "discord.js";
+import type { ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { commands } from "./commands/index.js";
 
 const FAKE_GUILD = "cli-test-guild";
@@ -46,7 +46,7 @@ function makeInteraction(
       getChannel: () => null,
       getSubcommand: () => subcommand ?? null,
     },
-  } as any;
+  } as unknown as ChatInputCommandInteraction;
 }
 
 function usage() {
