@@ -5,19 +5,28 @@ import { type CarryRow, getCarryStats, getMostRecentMatchTime } from "../store.j
 import { embed, rankPrefix } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 
+const DEFAULT_DAYS = 30;
+
 export const data = new SlashCommandBuilder()
   .setName("carry")
   .setDescription("Who has carried you the most? (Based on shared matches)")
   .addUserOption((opt) =>
     opt.setName("user").setDescription("Player to analyse (defaults to you)"),
+  )
+  .addIntegerOption((opt) =>
+    opt
+      .setName("days")
+      .setDescription(`Look-back window in days (default ${DEFAULT_DAYS})`)
+      .setMinValue(1)
+      .setMaxValue(365),
   );
 
 type View = { rows: CarryRow[]; latest: string | null };
 
 const MIN_SHARED = 3;
 
-function computeView(steamId: string): View {
-  const rows = getCarryStats(steamId)
+function computeView(steamId: string, days: number): View {
+  const rows = getCarryStats(steamId, days)
     .filter((r) => r.sharedMatches >= MIN_SHARED)
     .sort((a, b) => scoreFor(b) - scoreFor(a));
   return {
@@ -51,21 +60,29 @@ function signedProxy(n: number): string {
 export const execute = wrapCommand(async (interaction) => {
   const resolved = await requireLinkedUser(interaction);
   if (!resolved) return;
+  const days = interaction.options.getInteger("days") ?? DEFAULT_DAYS;
 
   await respondWithRevalidate<View>(interaction, {
     fetchCached: () => {
-      const v = computeView(resolved.steamId);
+      const v = computeView(resolved.steamId, days);
       if (!v.rows.length) return null;
       return { data: v, snapshotAt: v.latest };
     },
     fetchFresh: async () => {
       await refreshPlayers([resolved.steamId]).catch(() => undefined);
-      return computeView(resolved.steamId);
+      return computeView(resolved.steamId, days);
     },
     render: ({ rows, latest }) => {
+      if (!rows.length) {
+        return {
+          content:
+            `No teammates with \u2265${MIN_SHARED} shared matches in the last ${days} days. ` +
+            "Try a larger window via `days:`.",
+        };
+      }
       const body = rows.map((r, i) => formatRow(r, i)).join("\n");
       const e = embed()
-        .setTitle(`Who Carries ${resolved.label}?`)
+        .setTitle(`Who Carries ${resolved.label}? (Last ${days}d)`)
         .setDescription(body + freshnessSuffix(latest, "last match"));
       return { embeds: [e] };
     },

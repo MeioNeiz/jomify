@@ -6,6 +6,8 @@ import { embed, rankPrefix } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 import { formatMapLines, MIN_MATCHES } from "./maps.js";
 
+const DEFAULT_DAYS = 30;
+
 export const data = new SlashCommandBuilder()
   .setName("team")
   .setDescription("Team-wide stats for tracked players")
@@ -17,7 +19,14 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((sub) =>
     sub
       .setName("carry")
-      .setDescription("Who contributes most rating to other tracked players"),
+      .setDescription("Who contributes most rating to other tracked players")
+      .addIntegerOption((opt) =>
+        opt
+          .setName("days")
+          .setDescription(`Look-back window in days (default ${DEFAULT_DAYS})`)
+          .setMinValue(1)
+          .setMaxValue(365),
+      ),
   );
 
 export const execute = wrapCommand(async (interaction) => {
@@ -71,8 +80,9 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
     return;
   }
 
+  const days = interaction.options.getInteger("days") ?? DEFAULT_DAYS;
   const compute = (): CarryView => ({
-    rows: getTeamCarryStats(steamIds).filter((r) => r.sharedMatches >= 3),
+    rows: getTeamCarryStats(steamIds, days).filter((r) => r.sharedMatches >= 3),
     latest: getMostRecentMatchTime(steamIds),
   });
 
@@ -104,7 +114,7 @@ async function teamCarry(interaction: import("discord.js").ChatInputCommandInter
       const note = "-# Positive = net carry, negative = net drag vs team mean.";
 
       const e = embed()
-        .setTitle("Team Carry Rankings")
+        .setTitle(`Team Carry Rankings (Last ${days}d)`)
         .setDescription(
           `${lines.join("\n")}\n\n${note}${freshnessSuffix(latest, "last match")}`,
         );

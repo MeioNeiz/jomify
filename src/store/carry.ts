@@ -48,9 +48,14 @@ export interface CarryRow {
 }
 
 /** Who has carried `viewerSteamId`? Returns all teammates ranked by carry. */
-export function getCarryStats(viewerSteamId: string): CarryRow[] {
+export function getCarryStats(viewerSteamId: string, days?: number): CarryRow[] {
   // Self-join match_stats on match_id for shared matches, then per-match
   // Premier deltas via LAG over viewer's match timeline.
+  // LAG runs before the window filter so the delta for the earliest
+  // match in-window is still the true change from the prior game, not
+  // null-truncated by the filter.
+  const windowClause =
+    days != null ? "AND m.finished_at >= datetime('now', '-' || ? || ' days')" : "";
   const rows = sqlite
     .query(
       `WITH viewer_matches AS (
@@ -63,7 +68,8 @@ export function getCarryStats(viewerSteamId: string): CarryRow[] {
            vs.premier_after AS v_premier,
            LAG(vs.premier_after) OVER (
              ORDER BY m.finished_at
-           ) AS prev_premier
+           ) AS prev_premier,
+           m.finished_at AS finished_at
          FROM match_stats vs
          JOIN matches m ON m.match_id = vs.match_id
          WHERE vs.steam_id = ?
@@ -92,9 +98,14 @@ export function getCarryStats(viewerSteamId: string): CarryRow[] {
         AND t.steam_id != ?
        JOIN team_means tm
          ON tm.match_id = vm.match_id
-        AND tm.team_number = vm.viewer_team`,
+        AND tm.team_number = vm.viewer_team
+       WHERE 1=1 ${windowClause.replace("m.finished_at", "vm.finished_at")}`,
     )
-    .all(viewerSteamId, viewerSteamId) as Array<{
+    .all(
+      ...(days != null
+        ? [viewerSteamId, viewerSteamId, days]
+        : [viewerSteamId, viewerSteamId]),
+    ) as Array<{
     teammate_steam_id: string;
     teammate_name: string | null;
     t_lr: number | null;
@@ -157,7 +168,10 @@ export interface TeamCarryRow {
   premierSamples: number;
 }
 
-export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
+export function getTeamCarryStats(
+  guildSteamIds: string[],
+  days?: number,
+): TeamCarryRow[] {
   if (guildSteamIds.length < 2) return [];
 
   // Compute per-player contribution once per match rather than summing
@@ -168,6 +182,8 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
   //   team_means = per (match, team) Leetify-rating mean
   //   then sum overperf * outcome_weight once per row
   const placeholders = guildSteamIds.map(() => "?").join(",");
+  const windowClause =
+    days != null ? "AND m.finished_at >= datetime('now', '-' || ? || ' days')" : "";
   const rows = sqlite
     .query(
       `WITH eligible AS (
@@ -181,6 +197,7 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
          FROM match_stats ms
          JOIN matches m ON m.match_id = ms.match_id
          WHERE ms.steam_id IN (${placeholders})
+           ${windowClause}
            AND EXISTS (
              SELECT 1 FROM match_stats other
              WHERE other.match_id = ms.match_id
@@ -220,7 +237,11 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
          ON tm.match_id = e.match_id AND tm.team_number = e.team_number
        GROUP BY e.steam_id`,
     )
-    .all(...guildSteamIds, ...guildSteamIds) as {
+    .all(
+      ...(days != null
+        ? [...guildSteamIds, days, ...guildSteamIds]
+        : [...guildSteamIds, ...guildSteamIds]),
+    ) as {
     steamId: string;
     name: string;
     proxyScore: number;
@@ -236,15 +257,21 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
       `SELECT ms.steam_id AS steamId,
               COUNT(DISTINCT other.steam_id) AS partnerCount
        FROM match_stats ms
+       JOIN matches m ON m.match_id = ms.match_id
        JOIN match_stats other
          ON other.match_id = ms.match_id
         AND other.team_number = ms.team_number
         AND other.steam_id != ms.steam_id
         AND other.steam_id IN (${placeholders})
        WHERE ms.steam_id IN (${placeholders})
+         ${windowClause}
        GROUP BY ms.steam_id`,
     )
-    .all(...guildSteamIds, ...guildSteamIds) as {
+    .all(
+      ...(days != null
+        ? [...guildSteamIds, ...guildSteamIds, days]
+        : [...guildSteamIds, ...guildSteamIds]),
+    ) as {
     steamId: string;
     partnerCount: number;
   }[];
