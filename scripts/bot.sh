@@ -16,6 +16,8 @@
 #   ./scripts/bot.sh --restart             # restart prod bot
 #   ./scripts/bot.sh --test-alert          # fire a /fail ping to Healthchecks
 #   ./scripts/bot.sh --backup-now          # run the daily DB backup immediately
+#   ./scripts/bot.sh --restore              # restore latest backup
+#   ./scripts/bot.sh --restore 2026-04-16   # restore a specific date
 #
 # Override host/user via env:
 #   JOMIFY_HOST=1.2.3.4 ./scripts/bot.sh
@@ -29,6 +31,7 @@ MODE="-f"
 PRIORITY=""
 SINCE=""
 ACTION=""
+RESTORE_DATE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,6 +44,14 @@ while [[ $# -gt 0 ]]; do
     --restart) ACTION="restart"; shift ;;
     --test-alert) ACTION="test-alert"; shift ;;
     --backup-now) ACTION="backup-now"; shift ;;
+    --restore)
+      ACTION="restore"
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        RESTORE_DATE="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
     -n) N="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -80,6 +91,11 @@ case "$ACTION" in
     ;;
   backup-now)
     ssh "$SSH_USER@$HOST" "sudo systemctl start jomify-backup.service && sudo journalctl -u jomify-backup -n 20 --no-pager -o cat"
+    ;;
+  restore)
+    # -t allocates a PTY so the restore script's "type yes" prompt works.
+    ssh -t "$SSH_USER@$HOST" \
+      "cd ~/jomify && git pull --quiet && ./scripts/restore.sh $RESTORE_DATE"
     ;;
   "")
     CMD="sudo journalctl -u jomify $MODE -n $N $PRIORITY $SINCE -o cat | ~/.bun/bin/bunx pino-pretty"
