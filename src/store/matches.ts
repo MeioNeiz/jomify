@@ -14,6 +14,21 @@ export function isMatchProcessed(matchId: string, steamId: string): boolean {
   return !!row;
 }
 
+/**
+ * Have we saved the full per-player details for this match? Distinct
+ * from isMatchProcessed (which only tracks "alerts already sent"). A
+ * match can be processed-but-not-saved if getMatchDetails failed
+ * transiently; we retry until saved.
+ */
+export function hasMatchStats(matchId: string, steamId: string): boolean {
+  const row = db
+    .select({ one: sql<number>`1` })
+    .from(matchStats)
+    .where(and(eq(matchStats.matchId, matchId), eq(matchStats.steamId, steamId)))
+    .get();
+  return !!row;
+}
+
 export function markMatchProcessed(
   matchId: string,
   steamId: string,

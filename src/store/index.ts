@@ -55,6 +55,7 @@ export {
   getProcessedMatchCount,
   getRecentMatchesSince,
   getStoredMatchCount,
+  hasMatchStats,
   isMatchProcessed,
   markMatchProcessed,
   type PlayerAverages,
