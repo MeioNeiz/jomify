@@ -337,11 +337,10 @@ export const execute = wrapCommand(async (interaction) => {
         `Positioning: ${pos1} vs ${pos2}`,
         `Utility: ${u1v} vs ${u2v}`,
       ];
-      const title = cached ? `${v.n1} vs ${v.n2} (cached)` : `${v.n1} vs ${v.n2}`;
       const desc = cached
-        ? lines.join("\n") + freshnessSuffix(snapshotAt, "cached \u2014 last synced")
+        ? lines.join("\n") + freshnessSuffix(snapshotAt, "snapshot from")
         : lines.join("\n");
-      const embed = leetifyEmbed(title).setDescription(desc).setFooter({
+      const embed = leetifyEmbed(`${v.n1} vs ${v.n2}`).setDescription(desc).setFooter({
         text: "Use focus option for detail: ratings, combat, utility, h2h, form",
       });
       return { embeds: [embed] };

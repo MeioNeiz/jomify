@@ -157,3 +157,12 @@ export const playerStreaks = sqliteTable("player_streaks", {
   lastAlertedCount: integer("last_alerted_count").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(now),
 });
+
+// Steam accounts the user is tracking that don't have a Leetify profile.
+// We cache these so the watcher stops polling (and logging) them every
+// cycle. Re-checked after RECHECK_HOURS in case they sign up later.
+export const leetifyUnknown = sqliteTable("leetify_unknown", {
+  steamId: text("steam_id").primaryKey(),
+  firstSeen: text("first_seen").notNull().default(now),
+  lastChecked: text("last_checked").notNull().default(now),
+});

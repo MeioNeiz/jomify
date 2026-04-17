@@ -202,6 +202,13 @@ sqlite.run(`
       DEFAULT (datetime('now'))
   )
 `);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS leetify_unknown (
+    steam_id     TEXT PRIMARY KEY,
+    first_seen   TEXT NOT NULL DEFAULT (datetime('now')),
+    last_checked TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
 
 const db = drizzle(sqlite, { schema });
 

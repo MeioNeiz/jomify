@@ -5,13 +5,16 @@ import { sqlite as db } from "../src/db.js";
 
 import {
   addTrackedPlayer,
+  clearLeetifyUnknown,
   getDiscordId,
   getLastLeaderboard,
   getNotifyChannel,
   getSteamId,
   getTrackedPlayers,
+  isLeetifyUnknown,
   isMatchProcessed,
   linkAccount,
+  markLeetifyUnknown,
   markMatchProcessed,
   removeTrackedPlayer,
   saveLeaderboardSnapshot,
@@ -29,6 +32,7 @@ beforeEach(() => {
   db.run("DELETE FROM guild_config");
   db.run("DELETE FROM leaderboard_snapshots");
   db.run("DELETE FROM snapshots");
+  db.run("DELETE FROM leetify_unknown");
 });
 
 describe("tracked players", () => {
@@ -130,5 +134,43 @@ describe("leaderboard snapshots", () => {
     const result = getLastLeaderboard(GUILD);
     expect(result).toHaveLength(2);
     expect(result.find((r) => r.steamId === STEAM)?.premier).toBe(15000);
+  });
+});
+
+describe("leetify-unknown marker", () => {
+  test("unmarked player returns false", () => {
+    expect(isLeetifyUnknown(STEAM)).toBe(false);
+  });
+
+  test("mark then check", () => {
+    markLeetifyUnknown(STEAM);
+    expect(isLeetifyUnknown(STEAM)).toBe(true);
+  });
+
+  test("clear removes the mark", () => {
+    markLeetifyUnknown(STEAM);
+    clearLeetifyUnknown(STEAM);
+    expect(isLeetifyUnknown(STEAM)).toBe(false);
+  });
+
+  test("mark is idempotent (updates last_checked)", () => {
+    markLeetifyUnknown(STEAM);
+    markLeetifyUnknown(STEAM);
+    expect(isLeetifyUnknown(STEAM)).toBe(true);
+    const rows = db.query("SELECT * FROM leetify_unknown").all();
+    expect(rows).toHaveLength(1);
+  });
+
+  test("stale marks (>24h) are treated as unknown=false", () => {
+    db.run(
+      "INSERT INTO leetify_unknown (steam_id, first_seen, last_checked) VALUES (?, datetime('now', '-30 days'), datetime('now', '-30 hours'))",
+      [STEAM],
+    );
+    expect(isLeetifyUnknown(STEAM)).toBe(false);
+  });
+
+  test("marks are isolated per steam id", () => {
+    markLeetifyUnknown(STEAM);
+    expect(isLeetifyUnknown("76561198000000002")).toBe(false);
   });
 });

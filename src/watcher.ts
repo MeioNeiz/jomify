@@ -11,6 +11,7 @@ import {
   getMatchDetails,
   getMatchHistory,
   getProfile,
+  LeetifyNotFoundError,
   LeetifyUnavailableError,
 } from "./leetify/client.js";
 import type { LeetifyMatchDetails, LeetifyProfile } from "./leetify/types.js";
@@ -19,6 +20,7 @@ import {
   getAllTrackedSteamIds,
   getPlayerStatAverages,
   getStoredMatchCount,
+  isLeetifyUnknown,
   isMatchProcessed,
   markMatchProcessed,
   recordPremierAfter,
@@ -35,6 +37,8 @@ const lastKnownPremier = new Map<string, number>();
 export async function backfillPlayer(steamId: string): Promise<number> {
   const stored = getStoredMatchCount(steamId);
   if (stored > 0) return stored;
+
+  if (isLeetifyUnknown(steamId)) return 0;
 
   try {
     const matches = await getMatchHistory(steamId);
@@ -54,6 +58,7 @@ export async function backfillPlayer(steamId: string): Promise<number> {
 
     return matches.length;
   } catch (err) {
+    if (err instanceof LeetifyNotFoundError) return 0;
     log.error({ steamId, err }, "Backfill failed");
     return 0;
   }
@@ -62,6 +67,7 @@ export async function backfillPlayer(steamId: string): Promise<number> {
 // ── Main check loop ──
 
 async function checkPlayer(client: Client, steamId: string) {
+  if (isLeetifyUnknown(steamId)) return;
   let profile: LeetifyProfile;
   try {
     profile = await getProfile(steamId);
@@ -210,6 +216,7 @@ export function startWatcher(client: Client) {
   const steamIds = getAllTrackedSteamIds();
   (async () => {
     for (const id of steamIds) {
+      if (isLeetifyUnknown(id)) continue;
       try {
         const p = await getProfile(id);
         if (p.ranks?.premier != null) {
@@ -220,6 +227,7 @@ export function startWatcher(client: Client) {
         }
       } catch (err) {
         if (err instanceof LeetifyUnavailableError) break;
+        if (err instanceof LeetifyNotFoundError) continue;
         log.warn({ steamId: id }, "Startup seed failed");
       }
       await new Promise((r) => setTimeout(r, MIN_GAP_MS));

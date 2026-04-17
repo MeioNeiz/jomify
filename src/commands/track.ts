@@ -7,6 +7,7 @@ import {
   getDiscordId,
   getSteamId,
   getTrackedPlayers,
+  isLeetifyUnknown,
   removeTrackedPlayer,
 } from "../store.js";
 import { backfillPlayer } from "../watcher.js";
@@ -89,6 +90,13 @@ export const execute = wrapCommand(async (interaction) => {
     if (!target) return;
     addTrackedPlayer(guildId, target.steamId);
     const count = await backfillPlayer(target.steamId);
+    if (isLeetifyUnknown(target.steamId)) {
+      await interaction.editReply(
+        `Added ${target.label}, but they haven't signed up for Leetify yet. ` +
+          "Once they sign in at leetify.com and play a match I'll start tracking automatically.",
+      );
+      return;
+    }
     await interaction.editReply(`Now tracking ${target.label}. Loaded ${count} matches.`);
   } else if (sub === "remove") {
     const target = await resolveTarget(interaction, "find");
