@@ -26,15 +26,15 @@ function computeView(steamId: string): View {
   };
 }
 
-/** Sort key: Premier score if we have data, proxy score otherwise. */
+/** Sort key: viewer's net Premier change with this teammate if we have data, proxy otherwise. */
 function scoreFor(r: CarryRow): number {
-  return r.premierSamples > 0 ? r.premierScore : r.proxyScore;
+  return r.premierSamples > 0 ? r.premierNetDelta : r.proxyScore;
 }
 
 function formatRow(r: CarryRow, i: number): string {
   const main =
     r.premierSamples > 0
-      ? `**${signed(r.premierScore)}** Premier`
+      ? `**${signed(r.premierNetDelta)}** Premier`
       : `**${signedProxy(r.proxyScore)}** carry score`;
   const note =
     r.premierSamples > 0 && r.premierSamples < r.sharedMatches

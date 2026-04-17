@@ -36,6 +36,13 @@ export interface CarryRow {
   teammateName: string;
   proxyScore: number;
   premierScore: number;
+  /**
+   * Signed sum of the viewer's ΔPremier across shared matches — i.e.
+   * "when I played with T, my rating moved by this much overall".
+   * Unweighted (unlike premierScore): answers the user question
+   * "did this teammate net me points or cost me points".
+   */
+  premierNetDelta: number;
   sharedMatches: number;
   premierSamples: number;
 }
@@ -120,13 +127,17 @@ export function getCarryStats(viewerSteamId: string): CarryRow[] {
       teammateName: r.teammate_name ?? r.teammate_steam_id,
       proxyScore: 0,
       premierScore: 0,
+      premierNetDelta: 0,
       sharedMatches: 0,
       premierSamples: 0,
     };
     entry.proxyScore += proxyDelta;
     entry.premierScore += premierContribution;
     entry.sharedMatches += 1;
-    if (premierDelta != null) entry.premierSamples += 1;
+    if (premierDelta != null) {
+      entry.premierNetDelta += premierDelta;
+      entry.premierSamples += 1;
+    }
     // Prefer the most recent non-null name.
     if (r.teammate_name) entry.teammateName = r.teammate_name;
     byMate.set(r.teammate_steam_id, entry);
