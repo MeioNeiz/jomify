@@ -699,6 +699,40 @@ describe("carry attribution", () => {
     expect(dong!.premierScore).toBeLessThan(0);
   });
 
+  test("premierNetDelta is the signed sum of viewer's ΔPremier per teammate", () => {
+    // Two matches; DONG on JOM's team both times. JOM nets +60 then
+    // loses 40. DONG's premierNetDelta should be +60 - 40 = +20.
+    saveMatchDetails(
+      makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: 0.05 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    saveMatchDetails(
+      makeCarryMatch("m2", "2026-01-02T00:00:00Z", 7, 13, [
+        { steamId: JOM, team: 2, lr: 0.0 },
+        { steamId: DONG, team: 2, lr: -0.02 },
+        { steamId: E1, team: 3, lr: 0 },
+        { steamId: E2, team: 3, lr: 0 },
+      ]),
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 14940 WHERE steam_id=? AND match_id=?",
+      [JOM, "m1"],
+    );
+    db.run(
+      "UPDATE match_stats SET premier_after = 15000 WHERE steam_id=? AND match_id=?",
+      [JOM, "m2"],
+    );
+    // LAG gives m2 a delta of +60. m1 has no prior so null. Net = +60.
+    const rows = getCarryStats(JOM);
+    const dong = rows.find((r) => r.teammateSteamId === DONG);
+    expect(dong!.premierNetDelta).toBe(60);
+    expect(dong!.premierSamples).toBe(1);
+  });
+
   test("team carry aggregates per player", () => {
     saveMatchDetails(
       makeCarryMatch("m1", "2026-01-01T00:00:00Z", 13, 7, [
