@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import type { ChatInputCommandInteraction } from "discord.js";
 import { fmt, freshnessSuffix, requireGuild } from "../src/helpers.js";
 import { getProfile } from "../src/leetify/client.js";
 import { COLOURS } from "../src/ui.js";
@@ -29,7 +30,10 @@ describe("fmt", () => {
 
 describe("requireGuild", () => {
   test("returns guildId when present", async () => {
-    const interaction = { guildId: "123", editReply: async () => {} } as any;
+    const interaction = {
+      guildId: "123",
+      editReply: async () => {},
+    } as unknown as ChatInputCommandInteraction;
     expect(await requireGuild(interaction)).toBe("123");
   });
 
@@ -40,7 +44,7 @@ describe("requireGuild", () => {
       editReply: async (m: unknown) => {
         replied = m;
       },
-    } as any;
+    } as unknown as ChatInputCommandInteraction;
     expect(await requireGuild(interaction)).toBeNull();
     expect(replied).toBe("Use this in a server.");
   });
