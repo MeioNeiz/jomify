@@ -1,11 +1,18 @@
 import {
   ActionRowBuilder,
+  type InteractionEditReplyOptions,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { analyseStats } from "../analyse.js";
 import { registerComponent } from "../components.js";
+import {
+  getProfile,
+  isLeetifyCircuitOpen,
+  LeetifyNotFoundError,
+} from "../leetify/client.js";
+import log from "../logger.js";
 import {
   type EncounterRow,
   getAllTrackedSteamIds,
@@ -17,12 +24,10 @@ import { requireLinkedUser, wrapCommand } from "./handler.js";
 
 const DEFAULT_DAYS = 7;
 const MAX_DAYS = 90;
-// Lower than /sus's 10 — most randoms only appear in a handful of
-// our stored matches (we save all 10 players whenever a tracked
-// player is in a game), so a strict threshold would filter them out.
-// The noise this adds is acceptable given /suspects is a scan not a
-// verdict — worst case we flag a legit pro alongside the cheater.
-const MIN_MATCHES_FOR_ANALYSIS = 5;
+// Lowered to 1 so randoms appear in the initial pass — they typically
+// only show up in 1-2 of our stored matches each. The local score is
+// noisy at n=1 but the second-phase Leetify profile lookup firms it up.
+const MIN_MATCHES_FOR_ANALYSIS = 1;
 const ANALYSIS_HISTORY = 30;
 const MAX_SURFACED = 25;
 
@@ -43,21 +48,34 @@ export const data = new SlashCommandBuilder()
 interface SuspectEntry {
   steamId: string;
   name: string;
+  /** Local z-score composite from analyseStats against our stored matches. */
+  localScore: number;
+  /**
+   * Same local score plus a bump for extreme Leetify-lifetime values
+   * (high aim rating / HS accuracy / low preaim). Falls back to
+   * localScore when the profile hasn't been fetched or is unavailable.
+   */
   score: number;
   matchCount: number;
   encounterCount: number;
   withCount: number;
   vsCount: number;
+  /** Lifetime stats from Leetify's /v3/profile, populated in phase 2. */
+  profile: {
+    aim: number;
+    hs: number;
+    preaim: number;
+    bump: number;
+  } | null;
+  /** True if we tried to fetch and Leetify gave a usable response. */
+  refined: boolean;
 }
 
-// Verdict bands. The underlying threshold for "flagged" in /sus is 4;
-// here we widen to surface context (nothing happens at the cliff-edge
-// of 4.0 looking dramatically different from 3.9).
 function verdictFor(score: number): { icon: string } {
-  if (score >= 8) return { icon: "\u{1F6A9}" }; // strong sus
-  if (score >= 5) return { icon: "\u26A0\uFE0F" }; // sussy
-  if (score >= 3) return { icon: "\u{1F914}" }; // slightly elevated — thinking-face
-  return { icon: "\u2705" }; // clean
+  if (score >= 8) return { icon: "\u{1F6A9}" };
+  if (score >= 5) return { icon: "\u26A0\uFE0F" };
+  if (score >= 3) return { icon: "\u{1F914}" };
+  return { icon: "\u2705" };
 }
 
 function groupByPlayer(encounters: EncounterRow[]): Map<string, EncounterRow[]> {
@@ -87,22 +105,146 @@ function buildEntry(
   return {
     steamId,
     name: displayName,
+    localScore: score,
     score,
     matchCount: history.length,
     encounterCount: encounters.length,
     withCount,
     vsCount,
+    profile: null,
+    refined: false,
   };
+}
+
+/**
+ * Map Leetify lifetime stats into a score bump. Thresholds picked so
+ * a typical competitive player stays at 0, clear outliers add 1-2 per
+ * stat, and extreme values compound. Non-authoritative — still just
+ * z-score territory, but over lifetime rather than 1-match noise.
+ */
+function profileBump(aim: number, hs: number, preaim: number): number {
+  let bump = 0;
+  if (aim > 2.0) bump += 2;
+  else if (aim > 1.5) bump += 1;
+  if (hs > 0.35) bump += 2;
+  else if (hs > 0.28) bump += 1;
+  // Preaim in cm; lower is better. 0 usually means "no data".
+  if (preaim > 0 && preaim < 2.0) bump += 2;
+  else if (preaim > 0 && preaim < 3.0) bump += 1;
+  return bump;
+}
+
+async function refineEntry(entry: SuspectEntry): Promise<SuspectEntry> {
+  try {
+    const profile = await getProfile(entry.steamId);
+    const aim = profile.rating?.aim ?? 0;
+    const hs = profile.stats?.accuracy_head ?? 0;
+    const preaim = profile.stats?.preaim ?? 0;
+    const bump = profileBump(aim, hs, preaim);
+    return {
+      ...entry,
+      profile: { aim, hs, preaim, bump },
+      score: entry.localScore + bump,
+      refined: true,
+    };
+  } catch (err) {
+    if (err instanceof LeetifyNotFoundError) {
+      // Profile doesn't exist on Leetify — nothing to refine with.
+      return { ...entry, refined: true };
+    }
+    // Upstream down, private profile, etc. Leave the entry as-is so
+    // the caller still sees a local estimate.
+    return entry;
+  }
 }
 
 function renderLine(s: SuspectEntry): string {
   const v = verdictFor(s.score);
-  const profile = `https://steamcommunity.com/profiles/${s.steamId}`;
-  // Score bold so it's the visual anchor; encounter split in parens.
-  return (
-    `${v.icon} [${s.name}](${profile}) **${s.score.toFixed(1)}**` +
-    ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`
+  const profileUrl = `https://steamcommunity.com/profiles/${s.steamId}`;
+  const main =
+    `${v.icon} [${s.name}](${profileUrl}) **${s.score.toFixed(1)}**` +
+    ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`;
+  if (!s.profile) return main;
+  const aim = s.profile.aim.toFixed(2);
+  const hs = `${(s.profile.hs * 100).toFixed(0)}%`;
+  const preaim = `${s.profile.preaim.toFixed(1)}cm`;
+  return `${main}\n-# Leetify lifetime: aim ${aim} \u00B7 HS ${hs} \u00B7 preaim ${preaim}`;
+}
+
+function buildDetailSelect(entries: SuspectEntry[]) {
+  const options = entries.slice(0, 25).map((s) =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(s.name.slice(0, 100))
+      .setValue(s.steamId)
+      .setDescription(
+        `Score ${s.score.toFixed(1)} \u00B7 ${s.encounterCount} games`.slice(0, 100),
+      ),
   );
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("suspects:detail")
+    .setPlaceholder("Inspect a player")
+    .addOptions(options);
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+}
+
+type Summary = {
+  label: string;
+  days: number;
+  totalEncounters: number;
+  uniqueEncountered: number;
+  hiddenCleanFriends: number;
+  skipped: number;
+};
+
+function buildPayload(
+  entries: SuspectEntry[],
+  summary: Summary,
+  phase: "refining" | "done" | "leetify-down",
+): InteractionEditReplyOptions {
+  const sorted = [...entries].sort((a, b) => b.score - a.score);
+  const shown = sorted.slice(0, MAX_SURFACED);
+  const flaggedCount = sorted.filter((e) => e.score >= 4).length;
+
+  const topScore = sorted[0]?.score ?? 0;
+  const kind = topScore >= 5 ? "danger" : topScore >= 3 ? "warn" : "success";
+
+  const title = `Suspects \u2014 ${summary.label} (last ${summary.days}d)`;
+  const bands =
+    "-# \uD83D\uDEA9 \u22658 strong sus \u00B7 \u26A0\uFE0F \u22655 sussy " +
+    "\u00B7 \uD83E\uDD14 \u22653 elevated \u00B7 \u2705 clean. " +
+    "Score = local z-score + Leetify lifetime bump (aim/HS/preaim).";
+  const phaseNote =
+    phase === "refining"
+      ? "-# \u23F3 Refining with Leetify profile lookups\u2026"
+      : phase === "leetify-down"
+        ? "-# \u26A0\uFE0F Leetify is down \u2014 showing local estimates only."
+        : "";
+
+  const notes: string[] = [];
+  if (summary.hiddenCleanFriends > 0) {
+    notes.push(`${summary.hiddenCleanFriends} clean squadmate(s) hidden`);
+  }
+  if (summary.skipped > 0) {
+    notes.push(`${summary.skipped} player(s) with no stored matches skipped`);
+  }
+  const header =
+    `**${flaggedCount}** flagged of ${sorted.length} analysed ` +
+    `across ${summary.uniqueEncountered} unique players, ${summary.totalEncounters} encounters` +
+    (notes.length ? `\n-# ${notes.join(" \u00B7 ")}.` : "");
+
+  const body = shown.length ? shown.map(renderLine).join("\n") : "_No candidates._";
+  const hidden = sorted.length - shown.length;
+  const hiddenLine =
+    hidden > 0 ? `\n-# ${hidden} more hidden — try a shorter window.` : "";
+
+  const descParts = [header, "", body];
+  if (hiddenLine) descParts.push(hiddenLine);
+  if (phaseNote) descParts.push("", phaseNote);
+  descParts.push("", bands);
+
+  const e = embed(kind).setTitle(title).setDescription(descParts.join("\n"));
+  const components = shown.length ? [buildDetailSelect(shown)] : [];
+  return { embeds: [e], components };
 }
 
 export const execute = wrapCommand(async (interaction) => {
@@ -119,10 +261,6 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  // Focus on randoms: tracked squadmates only show when their score
-  // is actually suspicious (≥3, matching the "elevated" band). User
-  // knows their friends are clean — no point cluttering the list with
-  // them unless something looks off.
   const trackedSet = new Set(getAllTrackedSteamIds());
   const FRIEND_SUS_THRESHOLD = 3;
 
@@ -143,68 +281,55 @@ export const execute = wrapCommand(async (interaction) => {
     entries.push(entry);
   }
 
-  entries.sort((a, b) => b.score - a.score);
-  const shown = entries.slice(0, MAX_SURFACED);
-  const flaggedCount = entries.filter((e) => e.score >= 4).length;
-  const uniqueEncountered = new Set(encounters.map((e) => e.otherSteamId)).size;
+  const summary: Summary = {
+    label,
+    days,
+    totalEncounters: encounters.length,
+    uniqueEncountered: new Set(encounters.map((e) => e.otherSteamId)).size,
+    hiddenCleanFriends,
+    skipped,
+  };
 
-  const title = `Suspects \u2014 ${label} (last ${days}d)`;
-  // Colour leans on the strongest signal in the list: red if anyone is
-  // genuinely flagged, yellow for elevated-only, green for clean.
-  const topScore = entries[0]?.score ?? 0;
-  const kind = topScore >= 5 ? "danger" : topScore >= 3 ? "warn" : "success";
+  // Phase 1: render the local-only analysis immediately so the user
+  // sees *something* fast. If Leetify is currently down we skip
+  // phase 2 entirely (no point hammering a dead API).
+  const leetifyDown = isLeetifyCircuitOpen();
+  const phase1: "refining" | "leetify-down" = leetifyDown ? "leetify-down" : "refining";
+  await interaction.editReply(buildPayload(entries, summary, phase1));
 
-  const subtext =
-    "-# \uD83D\uDEA9 \u22658 strong sus \u00B7 \u26A0\uFE0F \u22655 sussy " +
-    "\u00B7 \uD83E\uDD14 \u22653 elevated \u00B7 \u2705 clean. " +
-    "Score is a z-score composite vs competitive averages, non-definitive.";
-  const notes: string[] = [];
-  if (hiddenCleanFriends > 0) {
-    notes.push(`${hiddenCleanFriends} clean squadmate(s) hidden`);
+  if (leetifyDown) return;
+
+  // Phase 2: fetch each surfaced player's Leetify profile in parallel
+  // and re-render with the refined score + lifetime stats. We only
+  // refine the top-N we'd actually show — the others don't need round
+  // trips since they won't appear.
+  const sortedByLocal = [...entries].sort((a, b) => b.score - a.score);
+  const toRefine = sortedByLocal.slice(0, MAX_SURFACED);
+  const toRefineIds = new Set(toRefine.map((e) => e.steamId));
+  const results = await Promise.allSettled(toRefine.map(refineEntry));
+  const refinedById = new Map<string, SuspectEntry>();
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    const original = toRefine[i];
+    if (!original) continue;
+    refinedById.set(original.steamId, r.status === "fulfilled" ? r.value : original);
   }
-  if (skipped > 0) {
-    notes.push(
-      `${skipped} player(s) skipped (fewer than ${MIN_MATCHES_FOR_ANALYSIS} stored matches)`,
-    );
+
+  const enriched = entries.map((e) =>
+    toRefineIds.has(e.steamId) ? (refinedById.get(e.steamId) ?? e) : e,
+  );
+
+  // If the circuit breaker tripped mid-refinement, mark the rendering
+  // so the user knows some rows are still on local scores.
+  const postPhase = isLeetifyCircuitOpen() ? "leetify-down" : "done";
+
+  try {
+    await interaction.editReply(buildPayload(enriched, summary, postPhase));
+  } catch (err) {
+    log.warn({ err }, "Failed to edit /suspects reply in phase 2");
   }
-  const header =
-    `**${flaggedCount}** flagged of ${entries.length} analysed ` +
-    `across ${uniqueEncountered} unique players, ${encounters.length} encounters` +
-    (notes.length ? `\n-# ${notes.join(" \u00B7 ")}.` : "");
-
-  const body = shown.map(renderLine).join("\n");
-  const hidden = entries.length - shown.length;
-  const hiddenLine =
-    hidden > 0 ? `\n-# ${hidden} more hidden — try a shorter window.` : "";
-
-  const e = embed(kind)
-    .setTitle(title)
-    .setDescription(`${header}\n\n${body}${hiddenLine}\n\n${subtext}`);
-
-  // Select menu lets the caller pull up a full /sus-style breakdown for
-  // any listed player — the one-line format deliberately skips per-stat
-  // flags, so this is how you dig in.
-  const components = shown.length ? [buildDetailSelect(shown)] : [];
-  await interaction.editReply({ embeds: [e], components });
 });
 
-function buildDetailSelect(entries: SuspectEntry[]) {
-  const options = entries.slice(0, 25).map((s) =>
-    new StringSelectMenuOptionBuilder()
-      .setLabel(s.name.slice(0, 100))
-      .setValue(s.steamId)
-      .setDescription(
-        `Score ${s.score.toFixed(1)} \u00B7 ${s.encounterCount} games`.slice(0, 100),
-      ),
-  );
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("suspects:detail")
-    .setPlaceholder("Inspect a player")
-    .addOptions(options);
-  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
-}
-
-// Select-menu handler: ephemeral per-player breakdown (flagged stats).
 registerComponent("suspects", async (interaction) => {
   if (!interaction.isStringSelectMenu()) return;
   const [, action] = interaction.customId.split(":");
@@ -225,7 +350,7 @@ registerComponent("suspects", async (interaction) => {
     .filter((c) => !c.flagged && c.z > 1.5)
     .sort((a, b) => b.z - a.z);
   const name = history[0]?.raw.name ?? steamId;
-  const profile = `https://steamcommunity.com/profiles/${steamId}`;
+  const profileUrl = `https://steamcommunity.com/profiles/${steamId}`;
   const lines: string[] = [];
   lines.push(`Score **${score.toFixed(1)}** across ${history.length} recent matches.`);
   if (flagged.length) {
@@ -240,6 +365,9 @@ registerComponent("suspects", async (interaction) => {
     lines.push("No individual stats stand out.");
   }
   const kind = score >= 5 ? "danger" : score >= 3 ? "warn" : "success";
-  const e = embed(kind).setTitle(name).setURL(profile).setDescription(lines.join("\n"));
+  const e = embed(kind)
+    .setTitle(name)
+    .setURL(profileUrl)
+    .setDescription(lines.join("\n"));
   await interaction.reply({ embeds: [e], ephemeral: true });
 });
