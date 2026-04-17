@@ -160,14 +160,81 @@ export interface TeamCarryRow {
 export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
   if (guildSteamIds.length < 2) return [];
 
-  // Unique-match counts per player: distinct matches each player
-  // appeared in alongside ANY other tracked teammate on the same team.
-  // Needed because summing per-viewer sharedMatches below would
-  // double-count every match with >=3 tracked players on the team.
+  // Compute per-player contribution once per match rather than summing
+  // per-viewer carries (which double-counts every match where >=3
+  // tracked players shared a team). The SQL:
+  //   eligible = matches where tracked player P was on a team with
+  //              at least one other tracked player
+  //   team_means = per (match, team) Leetify-rating mean
+  //   then sum overperf * outcome_weight once per row
   const placeholders = guildSteamIds.map(() => "?").join(",");
-  const uniqueRows = sqlite
+  const rows = sqlite
     .query(
-      `SELECT ms.steam_id AS steamId, COUNT(DISTINCT ms.match_id) AS unique_matches
+      `WITH eligible AS (
+         SELECT
+           ms.match_id, ms.steam_id, ms.team_number, ms.name,
+           ms.leetify_rating, ms.rounds_won, ms.rounds_lost,
+           ms.premier_after,
+           LAG(ms.premier_after) OVER (
+             PARTITION BY ms.steam_id ORDER BY m.finished_at
+           ) AS prev_premier
+         FROM match_stats ms
+         JOIN matches m ON m.match_id = ms.match_id
+         WHERE ms.steam_id IN (${placeholders})
+           AND EXISTS (
+             SELECT 1 FROM match_stats other
+             WHERE other.match_id = ms.match_id
+               AND other.team_number = ms.team_number
+               AND other.steam_id != ms.steam_id
+               AND other.steam_id IN (${placeholders})
+           )
+       ),
+       team_means AS (
+         SELECT match_id, team_number, AVG(leetify_rating) AS mean
+         FROM match_stats
+         WHERE leetify_rating IS NOT NULL
+         GROUP BY match_id, team_number
+       )
+       SELECT
+         e.steam_id AS steamId,
+         MAX(e.name) AS name,
+         COALESCE(SUM(
+           (e.leetify_rating - tm.mean) *
+           CASE
+             WHEN e.rounds_won IS NULL OR e.rounds_lost IS NULL THEN 0
+             WHEN e.rounds_won = e.rounds_lost THEN 0.5
+             ELSE 1
+           END
+         ), 0) AS proxyScore,
+         COALESCE(SUM(
+           CASE WHEN e.premier_after IS NOT NULL AND e.prev_premier IS NOT NULL
+                THEN (e.leetify_rating - tm.mean) *
+                     ABS(e.premier_after - e.prev_premier)
+                ELSE 0 END
+         ), 0) AS premierScore,
+         SUM(CASE WHEN e.premier_after IS NOT NULL AND e.prev_premier IS NOT NULL
+                  THEN 1 ELSE 0 END) AS premierSamples,
+         COUNT(DISTINCT e.match_id) AS sharedMatches
+       FROM eligible e
+       JOIN team_means tm
+         ON tm.match_id = e.match_id AND tm.team_number = e.team_number
+       GROUP BY e.steam_id`,
+    )
+    .all(...guildSteamIds, ...guildSteamIds) as {
+    steamId: string;
+    name: string;
+    proxyScore: number;
+    premierScore: number;
+    premierSamples: number;
+    sharedMatches: number;
+  }[];
+
+  // Partner count (distinct other tracked players seen across their
+  // eligible matches) — simpler as a second query than nesting above.
+  const partnerRows = sqlite
+    .query(
+      `SELECT ms.steam_id AS steamId,
+              COUNT(DISTINCT other.steam_id) AS partnerCount
        FROM match_stats ms
        JOIN match_stats other
          ON other.match_id = ms.match_id
@@ -179,38 +246,19 @@ export function getTeamCarryStats(guildSteamIds: string[]): TeamCarryRow[] {
     )
     .all(...guildSteamIds, ...guildSteamIds) as {
     steamId: string;
-    unique_matches: number;
+    partnerCount: number;
   }[];
-  const uniqueByPlayer = new Map(uniqueRows.map((r) => [r.steamId, r.unique_matches]));
+  const partnersByPlayer = new Map(partnerRows.map((r) => [r.steamId, r.partnerCount]));
 
-  const byPlayer = new Map<string, TeamCarryRow>();
-  for (const viewerId of guildSteamIds) {
-    const rows = getCarryStats(viewerId);
-    for (const r of rows) {
-      // Only count teammates who are also tracked in this guild (two-way).
-      if (!guildSteamIds.includes(r.teammateSteamId)) continue;
-      const entry = byPlayer.get(r.teammateSteamId) ?? {
-        steamId: r.teammateSteamId,
-        name: r.teammateName,
-        proxyScore: 0,
-        premierScore: 0,
-        partnerCount: 0,
-        sharedMatches: 0,
-        premierSamples: 0,
-      };
-      entry.proxyScore += r.proxyScore;
-      entry.premierScore += r.premierScore;
-      entry.premierSamples += r.premierSamples;
-      entry.partnerCount += 1;
-      entry.name = r.teammateName;
-      byPlayer.set(r.teammateSteamId, entry);
-    }
-  }
-
-  // Replace the double-counted running total with the true unique count.
-  for (const [steamId, entry] of byPlayer) {
-    entry.sharedMatches = uniqueByPlayer.get(steamId) ?? 0;
-  }
-
-  return [...byPlayer.values()].sort((a, b) => b.proxyScore - a.proxyScore);
+  return rows
+    .map((r) => ({
+      steamId: r.steamId,
+      name: r.name ?? r.steamId,
+      proxyScore: r.proxyScore,
+      premierScore: r.premierScore,
+      premierSamples: r.premierSamples,
+      sharedMatches: r.sharedMatches,
+      partnerCount: partnersByPlayer.get(r.steamId) ?? 0,
+    }))
+    .sort((a, b) => b.proxyScore - a.proxyScore);
 }
