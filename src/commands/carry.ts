@@ -64,7 +64,7 @@ export const execute = wrapCommand(async (interaction) => {
     render: ({ rows, latest }) => {
       const body = rows.map((r, i) => formatRow(r, i)).join("\n");
       const embed = leetifyEmbed(`${resolved.label} \u2014 Who Carries?`).setDescription(
-        body + freshnessSuffix(latest),
+        body + freshnessSuffix(latest, "last match"),
       );
       return { embeds: [embed] };
     },

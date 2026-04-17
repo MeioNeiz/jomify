@@ -80,7 +80,7 @@ export const execute = wrapCommand(async (interaction) => {
             "\u{1F4A5} HE damage to enemies | " +
             "\u{1F9EA} HEs | \u{1F525} mollies | \u{1F4A8} smokes\n\n" +
             lines.join("\n") +
-            freshnessSuffix(latest),
+            freshnessSuffix(latest, "last match"),
         );
       return { embeds: [embed] };
     },

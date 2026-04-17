@@ -198,7 +198,7 @@ async function shameGuild(
         .setDescription(
           `**${top[0]?.name}** takes the crown\n\n` +
             lines.join("\n") +
-            freshnessSuffix(latest, "last 2 days \u2022 most recent match"),
+            freshnessSuffix(latest, "last match"),
         );
       return { embeds: [embed] };
     },
