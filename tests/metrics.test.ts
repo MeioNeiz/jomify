@@ -152,6 +152,7 @@ describe("getCommandStats", () => {
       ttlMs: null,
       totalMs,
       apiCalls: apiCalls ? JSON.stringify({ "leetify:/v3/profile": apiCalls }) : null,
+      options: null,
       success,
       errorMessage: null,
       userId: null,

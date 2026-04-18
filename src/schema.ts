@@ -179,6 +179,10 @@ export const metrics = sqliteTable(
     ttlMs: integer("ttl_ms"),
     totalMs: integer("total_ms").notNull(),
     apiCalls: text("api_calls"),
+    // JSON snapshot of interaction.options.data — name of the
+    // subcommand (if any) and each option the user supplied. Lets
+    // you see "who ran /stats on @LaryIsland" in Datasette.
+    options: text("options"),
     success: integer("success").notNull(),
     errorMessage: text("error_message"),
     userId: text("user_id"),

@@ -218,6 +218,7 @@ sqlite.run(`
     ttl_ms        INTEGER,
     total_ms      INTEGER NOT NULL,
     api_calls     TEXT,
+    options       TEXT,
     success       INTEGER NOT NULL,
     error_message TEXT,
     user_id       TEXT,
@@ -228,6 +229,14 @@ sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_metrics_command_started
     ON metrics (command, started_at)
 `);
+// Post-install: `options` was added after initial rollout, catch up
+// existing DBs that predate it. Safe to run every start; the try
+// block is the usual "column already exists" swallow.
+try {
+  sqlite.run(`ALTER TABLE metrics ADD COLUMN options TEXT`);
+} catch {
+  /* already exists */
+}
 
 const db = drizzle(sqlite, { schema });
 

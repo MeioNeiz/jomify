@@ -15,7 +15,11 @@ import {
 import type { LeetifyMatchDetails, LeetifyProfile } from "./types.js";
 
 const BASE_URL = "https://api-public.cs-prod.leetify.com";
-const MAX_RETRIES = 3;
+// 2 retries means total worst-case wait of 2s + 4s = 6s (vs the old
+// 2+4+6 = 12s) before the circuit breaker trips. The 12s ceiling was
+// visible as a /stats p95 of ~12.6s on outage days; subsequent calls
+// fast-fail via the breaker so the cost was per-breaker-cycle.
+const MAX_RETRIES = 2;
 
 // ── Circuit breaker ──
 

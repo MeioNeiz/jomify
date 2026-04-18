@@ -37,6 +37,21 @@ function instrumentReplies(interaction: ChatInputCommandInteraction): void {
  * Wraps a command with deferReply + error handling.
  * Set defer to false for commands that reply immediately.
  */
+function snapshotOptions(interaction: ChatInputCommandInteraction): string | undefined {
+  try {
+    // interaction.options.data is the raw CommandInteractionOption[]
+    // — includes the resolved subcommand (if any) and each option's
+    // name/type/value/user/etc. JSON.stringify handles the tree
+    // natively; non-serialisable bits (e.g. resolved User instances)
+    // stringify to simple {id, username} shapes.
+    const data = interaction.options.data;
+    if (!data?.length) return undefined;
+    return JSON.stringify(data);
+  } catch {
+    return undefined;
+  }
+}
+
 export function wrapCommand(fn: CommandFn, opts?: { defer?: boolean }): CommandFn {
   const defer = opts?.defer ?? true;
   return async (interaction) => {
@@ -45,6 +60,7 @@ export function wrapCommand(fn: CommandFn, opts?: { defer?: boolean }): CommandF
         command: interaction.commandName,
         userId: interaction.user.id,
         guildId: interaction.guildId ?? undefined,
+        options: snapshotOptions(interaction),
       },
       async () => {
         instrumentReplies(interaction);

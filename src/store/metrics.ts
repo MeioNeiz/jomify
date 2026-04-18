@@ -9,6 +9,7 @@ export type MetricRow = {
   ttlMs: number | null;
   totalMs: number;
   apiCalls: string | null;
+  options: string | null;
   success: number;
   errorMessage: string | null;
   userId: string | null;
@@ -24,6 +25,7 @@ export function saveMetric(row: MetricRow): void {
       ttlMs: row.ttlMs,
       totalMs: row.totalMs,
       apiCalls: row.apiCalls,
+      options: row.options,
       success: row.success,
       errorMessage: row.errorMessage,
       userId: row.userId,
@@ -35,8 +37,11 @@ export function saveMetric(row: MetricRow): void {
 export type CommandStats = {
   command: string;
   count: number;
+  /** p50 / p95 of total_ms (full wall clock). */
   p50Ms: number;
   p95Ms: number;
+  /** p50 of ttf_ms — user-perceived latency before seeing any reply. */
+  ttfP50Ms: number;
   avgTotalMs: number;
   avgApiCalls: number;
   failureCount: number;
@@ -93,8 +98,9 @@ export function getCommandStats(days: number): CommandStats[] {
     results.push({
       command,
       count: agg.count,
-      p50Ms: percentile(command, days, 50),
-      p95Ms: percentile(command, days, 95),
+      p50Ms: percentile(command, days, 50, "total_ms"),
+      p95Ms: percentile(command, days, 95, "total_ms"),
+      ttfP50Ms: percentile(command, days, 50, "ttf_ms"),
       avgTotalMs: Math.round(agg.avg_total ?? 0),
       avgApiCalls: Math.round((agg.avg_api ?? 0) * 100) / 100,
       failureCount: agg.failures ?? 0,
@@ -105,28 +111,36 @@ export function getCommandStats(days: number): CommandStats[] {
   return results;
 }
 
-// OFFSET-based percentile: for N rows, pick the row at index
-// floor((N - 1) * pct/100) from an ascending sort. Good enough for
-// the /metrics overview; no external dependency on window funcs.
-function percentile(command: string, days: number, pct: number): number {
+// OFFSET-based percentile over a chosen numeric column. For N rows,
+// pick the row at index floor((N - 1) * pct/100) from an ascending
+// sort. Null values (e.g. ttf_ms when no reply was sent) are dropped
+// before counting so they don't drag the median down.
+function percentile(
+  command: string,
+  days: number,
+  pct: number,
+  column: "total_ms" | "ttf_ms",
+): number {
   const countRow = sqlite
     .query<{ count: number }, [string, number]>(
       `SELECT COUNT(*) as count FROM metrics
        WHERE command = ?
-         AND started_at >= datetime('now', '-' || ? || ' days')`,
+         AND started_at >= datetime('now', '-' || ? || ' days')
+         AND ${column} IS NOT NULL`,
     )
     .get(command, days);
   const count = countRow?.count ?? 0;
   if (count === 0) return 0;
   const offset = Math.floor(((count - 1) * pct) / 100);
   const row = sqlite
-    .query<{ total_ms: number }, [string, number, number]>(
-      `SELECT total_ms FROM metrics
+    .query<{ value: number }, [string, number, number]>(
+      `SELECT ${column} AS value FROM metrics
        WHERE command = ?
          AND started_at >= datetime('now', '-' || ? || ' days')
-       ORDER BY total_ms ASC
+         AND ${column} IS NOT NULL
+       ORDER BY ${column} ASC
        LIMIT 1 OFFSET ?`,
     )
     .get(command, days, offset);
-  return row?.total_ms ?? 0;
+  return row?.value ?? 0;
 }
