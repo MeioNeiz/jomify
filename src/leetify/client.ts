@@ -79,8 +79,11 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
   if (circuitOpen) throw new LeetifyUnavailableError();
 
   const endpoint = path.split("?")[0];
+  // Count once per logical call, not per retry — the api_usage table
+  // is meant to reflect how chatty we are with Leetify, not how
+  // many retries an outage forces us into.
+  trackApiCall(`leetify:${endpoint}`);
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    trackApiCall(`leetify:${endpoint}`);
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { Authorization: `Bearer ${config.leetifyApiKey}` },
     });

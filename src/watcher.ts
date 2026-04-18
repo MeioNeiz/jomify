@@ -225,7 +225,11 @@ async function checkPlayer(client: Client, steamId: string) {
   }
 }
 
-const CYCLE_MS = 5 * 60 * 1000;
+// Full-cycle = each tracked player polled once. 10 minutes keeps the
+// alert latency tolerable (matches rarely finish within 10 min of
+// starting) while roughly halving the baseline Leetify API load
+// compared to the old 5-minute cycle.
+const CYCLE_MS = 10 * 60 * 1000;
 const MIN_GAP_MS = 1_000;
 
 export function startWatcher(client: Client) {
