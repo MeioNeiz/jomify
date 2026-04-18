@@ -6,9 +6,32 @@ import { fetchGuildProfiles } from "../helpers.js";
 import { LeetifyUnavailableError } from "../leetify/client.js";
 import type { LeetifyProfile } from "../leetify/types.js";
 import log from "../logger.js";
+import { markFirstReply, markLastReply, runWithMetrics } from "../metrics.js";
 import { getSteamId } from "../store.js";
 
 type CommandFn = (interaction: ChatInputCommandInteraction) => Promise<void>;
+
+/**
+ * Wraps `reply`/`editReply` on a single interaction so every call feeds
+ * the active metrics collector. Mutates the interaction instance
+ * directly — each interaction is used once and then discarded, so
+ * scoping the wrapper to the instance avoids cross-talk between
+ * concurrent invocations.
+ */
+function instrumentReplies(interaction: ChatInputCommandInteraction): void {
+  const origReply = interaction.reply.bind(interaction);
+  const origEditReply = interaction.editReply.bind(interaction);
+  interaction.reply = (async (...args: Parameters<typeof origReply>) => {
+    markFirstReply();
+    markLastReply();
+    return origReply(...args);
+  }) as typeof interaction.reply;
+  interaction.editReply = (async (...args: Parameters<typeof origEditReply>) => {
+    markFirstReply();
+    markLastReply();
+    return origEditReply(...args);
+  }) as typeof interaction.editReply;
+}
 
 /**
  * Wraps a command with deferReply + error handling.
@@ -17,33 +40,43 @@ type CommandFn = (interaction: ChatInputCommandInteraction) => Promise<void>;
 export function wrapCommand(fn: CommandFn, opts?: { defer?: boolean }): CommandFn {
   const defer = opts?.defer ?? true;
   return async (interaction) => {
-    if (defer) await interaction.deferReply();
-    try {
-      await fn(interaction);
-    } catch (err) {
-      const e = err as { code?: number; message?: string } | undefined;
-      if (e?.code === 10062) return;
-      log.error({ cmd: interaction.commandName, err }, "Command error");
+    await runWithMetrics(
+      {
+        command: interaction.commandName,
+        userId: interaction.user.id,
+        guildId: interaction.guildId ?? undefined,
+      },
+      async () => {
+        instrumentReplies(interaction);
+        if (defer) await interaction.deferReply();
+        try {
+          await fn(interaction);
+        } catch (err) {
+          const e = err as { code?: number; message?: string } | undefined;
+          if (e?.code === 10062) return;
+          log.error({ cmd: interaction.commandName, err }, "Command error");
 
-      let msg = "Something went wrong.";
-      if (err instanceof LeetifyUnavailableError) {
-        msg = "Leetify is down right now \u2014 try again in a minute.";
-      } else if (e?.message?.includes("Leetify API error")) {
-        msg = "Leetify API error \u2014 try again shortly.";
-      } else if (e?.message?.includes("fetch failed")) {
-        msg = "Network error \u2014 couldn't reach external services.";
-      }
+          let msg = "Something went wrong.";
+          if (err instanceof LeetifyUnavailableError) {
+            msg = "Leetify is down right now \u2014 try again in a minute.";
+          } else if (e?.message?.includes("Leetify API error")) {
+            msg = "Leetify API error \u2014 try again shortly.";
+          } else if (e?.message?.includes("fetch failed")) {
+            msg = "Network error \u2014 couldn't reach external services.";
+          }
 
-      try {
-        if (interaction.deferred || interaction.replied) {
-          await interaction.editReply(msg);
-        } else {
-          await interaction.reply(msg);
+          try {
+            if (interaction.deferred || interaction.replied) {
+              await interaction.editReply(msg);
+            } else {
+              await interaction.reply(msg);
+            }
+          } catch {
+            /* interaction gone */
+          }
         }
-      } catch {
-        /* interaction gone */
-      }
-    }
+      },
+    );
   };
 }
 

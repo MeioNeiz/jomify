@@ -166,3 +166,23 @@ export const leetifyUnknown = sqliteTable("leetify_unknown", {
   firstSeen: text("first_seen").notNull().default(now),
   lastChecked: text("last_checked").notNull().default(now),
 });
+
+// Per-invocation timing + API-call attribution for slash commands.
+// Written once per command by runWithMetrics; queried by /metrics.
+export const metrics = sqliteTable(
+  "metrics",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    command: text("command").notNull(),
+    startedAt: text("started_at").notNull().default(now),
+    ttfMs: integer("ttf_ms"),
+    ttlMs: integer("ttl_ms"),
+    totalMs: integer("total_ms").notNull(),
+    apiCalls: text("api_calls"),
+    success: integer("success").notNull(),
+    errorMessage: text("error_message"),
+    userId: text("user_id"),
+    guildId: text("guild_id"),
+  },
+  (t) => [index("idx_metrics_command_started").on(t.command, t.startedAt)],
+);

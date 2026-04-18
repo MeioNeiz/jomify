@@ -29,7 +29,7 @@ const CATEGORIES: { title: string; commands: string[] }[] = [
   },
   {
     title: "Admin",
-    commands: ["track", "link", "setchannel", "import", "say", "jomify"],
+    commands: ["track", "link", "setchannel", "import", "say", "metrics", "jomify"],
   },
 ];
 
