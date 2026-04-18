@@ -209,6 +209,25 @@ sqlite.run(`
     last_checked TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS metrics (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    command       TEXT NOT NULL,
+    started_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    ttf_ms        INTEGER,
+    ttl_ms        INTEGER,
+    total_ms      INTEGER NOT NULL,
+    api_calls     TEXT,
+    success       INTEGER NOT NULL,
+    error_message TEXT,
+    user_id       TEXT,
+    guild_id      TEXT
+  )
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_metrics_command_started
+    ON metrics (command, started_at)
+`);
 
 const db = drizzle(sqlite, { schema });
 

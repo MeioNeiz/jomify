@@ -24,7 +24,6 @@ export {
   getNotifyChannel,
   setNotifyChannel,
 } from "./config.js";
-
 export {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
@@ -67,6 +66,12 @@ export {
   recordPremierAfter,
   saveMatchDetails,
 } from "./matches.js";
+export {
+  type CommandStats,
+  getCommandStats,
+  type MetricRow,
+  saveMetric,
+} from "./metrics.js";
 export {
   addTrackedPlayer,
   getAllTrackedSteamIds,

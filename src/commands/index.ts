@@ -17,6 +17,7 @@ import * as kobe from "./kobe.js";
 import * as leaderboard from "./leaderboard.js";
 import * as link from "./link.js";
 import * as maps from "./maps.js";
+import * as metrics from "./metrics.js";
 import * as say from "./say.js";
 import * as setchannel from "./setchannel.js";
 import * as shame from "./shame.js";
@@ -55,5 +56,6 @@ export const commands: [string, Command][] = [
   ["best", best],
   ["history", history],
   ["say", say],
+  ["metrics", metrics],
   ["jomify", jomify],
 ];

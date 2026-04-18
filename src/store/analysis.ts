@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import db from "../db.js";
+import { bumpApiCall } from "../metrics.js";
 import { analysedOpponents, apiUsage, matches, matchStats } from "../schema.js";
 
 export interface HeadToHeadResult {
@@ -76,6 +77,8 @@ export function trackApiCall(endpoint: string): void {
       set: { count: sql`${apiUsage.count} + 1` },
     })
     .run();
+  // Also attribute to the in-flight command (no-op for background work).
+  bumpApiCall(endpoint);
 }
 
 export function getApiUsage(
