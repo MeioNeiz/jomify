@@ -11,6 +11,8 @@ export type Collector = {
   command: string;
   userId?: string;
   guildId?: string;
+  /** JSON snapshot of interaction options — subcommand + option values. */
+  options?: string;
   startedAtIso: string;
   startMs: number;
   apiCalls: Record<string, number>;
@@ -42,13 +44,14 @@ export function markLastReply(): void {
 }
 
 export async function runWithMetrics<T>(
-  opts: { command: string; userId?: string; guildId?: string },
+  opts: { command: string; userId?: string; guildId?: string; options?: string },
   fn: () => Promise<T>,
 ): Promise<T> {
   const collector: Collector = {
     command: opts.command,
     userId: opts.userId,
     guildId: opts.guildId,
+    options: opts.options,
     startedAtIso: new Date().toISOString(),
     startMs: Date.now(),
     apiCalls: {},
@@ -88,6 +91,7 @@ function persist(
       ttlMs,
       totalMs,
       apiCalls: apiCallsJson,
+      options: c.options ?? null,
       success: outcome.success ? 1 : 0,
       errorMessage: outcome.errorMessage ?? null,
       userId: c.userId ?? null,
