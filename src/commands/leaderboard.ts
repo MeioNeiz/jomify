@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fetchGuildProfiles, freshnessSuffix, relTime } from "../helpers.js";
+import { fetchGuildProfiles, relTime } from "../helpers.js";
+import { isLeetifyCircuitOpen } from "../leetify/client.js";
 import {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
@@ -112,17 +113,27 @@ export const execute = wrapCommand(async (interaction) => {
     },
     render: (v, { cached, snapshotAt }) => {
       const rows = buildRows(v.entries, v.prev);
-      // Make the "+58" self-describing: state exactly which two
-      // snapshots the deltas span. Stays hidden when no baseline
-      // exists (first run for this guild).
-      const arrowNote = v.prevRecordedAt
-        ? `\n-# Arrows show change since ${relTime(v.prevRecordedAt)}`
-        : "";
-      const desc =
-        table(rows) +
-        arrowNote +
-        (cached ? freshnessSuffix(snapshotAt, "snapshot from") : "");
-      return { embeds: [embed().setTitle("Leaderboard").setDescription(desc)] };
+      // One footer line. Left side tells you when the shown data is
+      // from (only when stale); right side tells you what the arrows
+      // are relative to. Omitted entirely on a first-ever run.
+      const bits: string[] = [];
+      if (cached && snapshotAt) {
+        bits.push(`snapshot ${relTime(snapshotAt)}`);
+      }
+      if (v.prevRecordedAt) {
+        bits.push(`arrows since ${relTime(v.prevRecordedAt)}`);
+      }
+      if (isLeetifyCircuitOpen()) {
+        bits.push("Leetify unavailable");
+      }
+      const footer = bits.length ? `\n-# ${bits.join(" \u00B7 ")}` : "";
+      return {
+        embeds: [
+          embed()
+            .setTitle("Leaderboard")
+            .setDescription(table(rows) + footer),
+        ],
+      };
     },
     missingMessage:
       "Leetify is down and there's no cached leaderboard yet \u2014 try again shortly.",
