@@ -17,6 +17,7 @@ import { sql } from "drizzle-orm";
 import { STARTING_BALANCE, WEEKLY_ARCHIVE_RANKS } from "./betting/config.js";
 import bettingDb from "./betting/db.js";
 import { accounts, weeklyWins } from "./betting/schema.js";
+import { CURRENCY } from "./betting/ui.js";
 import type { LeetifyProfile } from "./cs/leetify/types.js";
 import {
   getDiscordId,
@@ -158,7 +159,7 @@ function buildMergedLines(rows: MergedRow[]): string[] {
   return rows.map((r, i) => {
     const rating = r.premier ? r.premier.toLocaleString() : "Unranked";
     return (
-      `${rankPrefix(i)} **${r.name}** \u2014 **${r.balance}** credits` +
+      `${rankPrefix(i)} **${r.name}** \u2014 **${CURRENCY.format(r.balance)}**` +
       ` \u00B7 ${rating}${fmtDelta(r.premierDelta)}${fmtMove(r.posDelta)}`
     );
   });
@@ -166,11 +167,12 @@ function buildMergedLines(rows: MergedRow[]): string[] {
 
 function buildBettingLines(rows: { discordId: string; balance: number }[]): string[] {
   return rows.map(
-    (r, i) => `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.balance}** credits`,
+    (r, i) =>
+      `${rankPrefix(i)} <@${r.discordId}> \u2014 **${CURRENCY.format(r.balance)}**`,
   );
 }
 
-const RESET_FOOTER = `\n\n_Week over — everyone's back to ${STARTING_BALANCE} credits. Place your bets._`;
+const RESET_FOOTER = `\n\n_Week over — everyone's back to ${CURRENCY.format(STARTING_BALANCE)}. Place your bets._`;
 
 // ── Per-guild post ───────────────────────────────────────────────────
 
