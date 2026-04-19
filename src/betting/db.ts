@@ -43,13 +43,33 @@ sqlite.run(`
     status             TEXT NOT NULL,
     winning_outcome    TEXT,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    resolved_at        TEXT
+    resolved_at        TEXT,
+    expires_at         TEXT,
+    channel_id         TEXT,
+    message_id         TEXT
   )
 `);
 sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_bets_guild_status
     ON bets (guild_id, status)
 `);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_bets_expires
+    ON bets (expires_at)
+`);
+// Post-install migrations for installs that predate the auto-expiry
+// columns. Each try swallows the usual "column already exists" error.
+for (const col of [
+  "ALTER TABLE bets ADD COLUMN expires_at TEXT",
+  "ALTER TABLE bets ADD COLUMN channel_id TEXT",
+  "ALTER TABLE bets ADD COLUMN message_id TEXT",
+]) {
+  try {
+    sqlite.run(col);
+  } catch {
+    /* already exists */
+  }
+}
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS wagers (
     bet_id     INTEGER NOT NULL REFERENCES bets(id),

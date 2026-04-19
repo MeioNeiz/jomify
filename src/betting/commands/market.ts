@@ -1,7 +1,6 @@
 import {
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
   type ChatInputCommandInteraction,
   type InteractionReplyOptions,
   type MessageEditOptions,
@@ -17,6 +16,7 @@ import { registerComponent } from "../../components.js";
 import log from "../../logger.js";
 import { embed, pad, rankPrefix, table } from "../../ui.js";
 import {
+  cancelBet,
   createBet,
   ensureAccount,
   getAllTimeWins,
@@ -29,33 +29,48 @@ import {
   type Outcome,
   placeWager,
   resolveBet,
+  setBetMessage,
 } from "../store.js";
+import {
+  MARKET_BUTTONS,
+  MARKET_COPY,
+  MARKET_DURATIONS,
+  MARKET_EMBED_COLOUR,
+  MARKET_EMOJI,
+} from "../ui.js";
 
 export const data = new SlashCommandBuilder()
-  .setName("bet")
-  .setDescription("Pari-mutuel prediction markets")
+  .setName("market")
+  .setDescription("Polymarket-style yes/no prediction markets")
   .addSubcommand((sub) =>
     sub
-      .setName("open")
-      .setDescription("Create a new yes/no bet")
+      .setName("create")
+      .setDescription("Open a new prediction market")
       .addStringOption((opt) =>
         opt
           .setName("question")
-          .setDescription("The question people are betting on")
+          .setDescription("What are people predicting on?")
           .setRequired(true)
           .setMaxLength(200),
-      ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription("Auto-close + refund after this long (default: never)");
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
   )
   .addSubcommand((sub) =>
-    sub.setName("list").setDescription("List open bets in this server"),
+    sub.setName("list").setDescription("Show open markets in this server"),
   )
   .addSubcommand((sub) =>
-    sub.setName("balance").setDescription("Show your balance and recent ledger entries"),
+    sub.setName("balance").setDescription("Show your credits and recent ledger"),
   )
   .addSubcommand((sub) =>
     sub
       .setName("leaderboard")
-      .setDescription("Show the betting leaderboard")
+      .setDescription("Credit leaderboard")
       .addStringOption((opt) =>
         opt
           .setName("view")
@@ -67,109 +82,138 @@ export const data = new SlashCommandBuilder()
       ),
   );
 
-// ── Interactive bet view ─────────────────────────────────────────────
+// ── Market view rendering ────────────────────────────────────────────
 
 type Pool = { yes: number; no: number; total: number };
 
-function poolForBet(betId: number): Pool {
-  const wagers = getWagersForBet(betId);
+function poolFor(betId: number): Pool {
+  const rows = getWagersForBet(betId);
   let yes = 0;
   let no = 0;
-  for (const w of wagers) {
+  for (const w of rows) {
     if (w.outcome === "yes") yes += w.amount;
     else no += w.amount;
   }
   return { yes, no, total: yes + no };
 }
 
-function wagerLines(betId: number): string[] {
+function positionLines(betId: number): string[] {
   const rows = getWagersForBet(betId);
-  return rows.map((w) => `\u2022 <@${w.discordId}>: **${w.amount}** on ${w.outcome}`);
+  return rows.map((w) => {
+    const side = w.outcome === "yes" ? MARKET_EMOJI.yes : MARKET_EMOJI.no;
+    return `${side} <@${w.discordId}> \u2014 **${w.amount}** on ${w.outcome}`;
+  });
 }
 
-/**
- * Render the bet message from current DB state. Used by /bet open,
- * /bet list, every button click, and every modal submit — one render
- * path, no drift.
- */
-function renderBetView(betId: number): MessageEditOptions & InteractionReplyOptions {
+function button(
+  customId: string,
+  cfg: { style: number; label: string; emoji?: string },
+): ButtonBuilder {
+  const b = new ButtonBuilder()
+    .setCustomId(customId)
+    .setLabel(cfg.label)
+    .setStyle(cfg.style);
+  if (cfg.emoji) b.setEmoji(cfg.emoji);
+  return b;
+}
+
+export function renderMarketView(
+  betId: number,
+): MessageEditOptions & InteractionReplyOptions {
   const bet = getBet(betId);
   if (!bet) {
-    return { content: `Bet #${betId} doesn't exist.`, embeds: [], components: [] };
+    return { content: `Market #${betId} doesn't exist.`, embeds: [], components: [] };
   }
-  const pool = poolForBet(betId);
-  const wagers = wagerLines(betId);
+  const pool = poolFor(betId);
+  const positions = positionLines(betId);
 
-  const isResolved = bet.status !== "open";
-  const colourKind = isResolved
-    ? bet.winningOutcome === "yes"
-      ? "success"
-      : "danger"
-    : "brand";
+  const header = (() => {
+    if (bet.status === "resolved") {
+      return `${MARKET_EMOJI.resolved} ${MARKET_COPY.resolvedPrefix}: **${bet.winningOutcome?.toUpperCase()}**`;
+    }
+    if (bet.status === "cancelled") {
+      return MARKET_COPY.cancelledLine;
+    }
+    return (
+      `${MARKET_COPY.volumeLabel}: ${MARKET_EMOJI.yes} **${pool.yes}** yes · ` +
+      `${MARKET_EMOJI.no} **${pool.no}** no (**${pool.total}** total)`
+    );
+  })();
 
-  const header = isResolved
-    ? `Resolved: **${bet.winningOutcome?.toUpperCase()}**`
-    : `Pool: 🟢 **${pool.yes}** yes · 🔴 **${pool.no}** no (total **${pool.total}**)`;
-
-  const desc = [
-    header,
-    `Created by <@${bet.creatorDiscordId}>`,
-    "",
-    wagers.length ? wagers.join("\n") : "_No wagers yet._",
-  ];
-  if (!isResolved) {
-    desc.push("", "-# Tap Yes or No to wager. Creator resolves with the bottom row.");
+  const desc = [header, `${MARKET_COPY.creatorPrefix} <@${bet.creatorDiscordId}>`];
+  if (bet.status === "open" && bet.expiresAt) {
+    // Discord's <t:epoch:R> renders a live-updating relative timestamp,
+    // so "closes in 3 hours" auto-reflows without us resending messages.
+    const unix = Math.floor(new Date(`${bet.expiresAt}Z`).getTime() / 1000);
+    desc.push(`Closes <t:${unix}:R>`);
   }
+  desc.push("");
+  desc.push(`__${MARKET_COPY.positionsLabel}__`);
+  desc.push(positions.length ? positions.join("\n") : MARKET_COPY.emptyPositions);
+  if (bet.status === "open") desc.push("", MARKET_COPY.footerOpen);
 
-  const e = embed(colourKind)
-    .setTitle(`Bet #${bet.id} \u2014 ${bet.question}`)
+  const e = embed(MARKET_EMBED_COLOUR)
+    .setTitle(MARKET_COPY.title(bet.id, bet.question))
     .setDescription(desc.join("\n"));
 
-  if (isResolved) {
+  if (bet.status !== "open") {
     return { embeds: [e], components: [] };
   }
 
-  const wagerRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`bet:wager:${bet.id}:yes`)
-      .setLabel("Bet Yes")
-      .setEmoji("\u2705")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`bet:wager:${bet.id}:no`)
-      .setLabel("Bet No")
-      .setEmoji("\u274C")
-      .setStyle(ButtonStyle.Danger),
+  const buyRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    button(`market:wager:${bet.id}:yes`, MARKET_BUTTONS.buyYes),
+    button(`market:wager:${bet.id}:no`, MARKET_BUTTONS.buyNo),
   );
   const resolveRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`bet:resolve:${bet.id}:yes`)
-      .setLabel("Yes wins")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`bet:resolve:${bet.id}:no`)
-      .setLabel("No wins")
-      .setStyle(ButtonStyle.Secondary),
+    button(`market:resolve:${bet.id}:yes`, MARKET_BUTTONS.resolveYes),
+    button(`market:resolve:${bet.id}:no`, MARKET_BUTTONS.resolveNo),
   );
-  return { embeds: [e], components: [wagerRow, resolveRow] };
+  return { embeds: [e], components: [buyRow, resolveRow] };
 }
 
 // ── Slash handlers ───────────────────────────────────────────────────
 
-async function handleOpen(interaction: ChatInputCommandInteraction, guildId: string) {
+function durationHours(choice: string | null): number | null {
+  if (!choice) return null;
+  return MARKET_DURATIONS.find((d) => d.name === choice)?.hours ?? null;
+}
+
+function expiryIso(hours: number | null): string | null {
+  if (!hours) return null;
+  const when = new Date(Date.now() + hours * 3600 * 1000);
+  // Match SQLite's datetime('now') format ('YYYY-MM-DD HH:MM:SS', UTC).
+  return when.toISOString().replace("T", " ").replace(/\..+$/, "");
+}
+
+async function handleCreate(interaction: ChatInputCommandInteraction, guildId: string) {
   const question = interaction.options.getString("question", true);
-  const id = createBet(guildId, interaction.user.id, question);
-  await interaction.editReply(renderBetView(id));
+  const durationChoice = interaction.options.getString("duration");
+  const hours = durationHours(durationChoice);
+  const expiresAt = expiryIso(hours);
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt);
+  await interaction.editReply(renderMarketView(id));
+
+  // Capture the Discord message pointer so the expiry watcher can edit
+  // this same post when it auto-cancels. Best-effort: if the fetch
+  // fails the market still works, it just can't update its own message
+  // on expiry (the auto-cancel still refunds).
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
 }
 
 async function handleList(interaction: ChatInputCommandInteraction, guildId: string) {
   const open = listOpenBets(guildId);
   if (!open.length) {
-    await interaction.editReply("No open bets. Start one with `/bet open`.");
+    await interaction.editReply("No open markets. Start one with `/market create`.");
     return;
   }
   const options = open.slice(0, 25).map((b) => {
-    const pool = poolForBet(b.id);
+    const pool = poolFor(b.id);
     const q = b.question.length > 90 ? `${b.question.slice(0, 89)}\u2026` : b.question;
     return new StringSelectMenuOptionBuilder()
       .setLabel(`#${b.id} ${q}`)
@@ -177,13 +221,13 @@ async function handleList(interaction: ChatInputCommandInteraction, guildId: str
       .setDescription(`${pool.yes} yes / ${pool.no} no (${pool.total} total)`);
   });
   const menu = new StringSelectMenuBuilder()
-    .setCustomId("bet:pick")
-    .setPlaceholder("Pick a bet to view…")
+    .setCustomId("market:pick")
+    .setPlaceholder("Pick a market to view…")
     .addOptions(options);
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
-  const e = embed()
-    .setTitle("Open bets")
-    .setDescription(`${open.length} open. Pick one to bet on or resolve.`);
+  const e = embed(MARKET_EMBED_COLOUR)
+    .setTitle("Open markets")
+    .setDescription(`${open.length} open. Pick one to buy in or resolve.`);
   await interaction.editReply({ embeds: [e], components: [row] });
 }
 
@@ -200,7 +244,7 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
     return `${pad(r.at.slice(5, 16), 11)} ${pad(sign, 5)} ${pad(r.reason, 15)} ${ref}`;
   });
   const body = rows.length ? table(rows) : "_No activity yet._";
-  const e = embed()
+  const e = embed(MARKET_EMBED_COLOUR)
     .setTitle("Your balance")
     .setDescription(`**${balance} credits**\n\n${body}`);
   await interaction.editReply({ embeds: [e] });
@@ -218,7 +262,9 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
       const wk = r.weeksWon === 1 ? "week" : "weeks";
       return `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.weeksWon}** ${wk} won`;
     });
-    const e = embed().setTitle("All-time leaderboard").setDescription(lines.join("\n"));
+    const e = embed(MARKET_EMBED_COLOUR)
+      .setTitle("All-time leaderboard")
+      .setDescription(lines.join("\n"));
     await interaction.editReply({ embeds: [e] });
     return;
   }
@@ -231,7 +277,7 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
   const lines = rows.map(
     (r, i) => `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.balance}** credits`,
   );
-  const e = embed()
+  const e = embed(MARKET_EMBED_COLOUR)
     .setTitle("This week's standings")
     .setDescription(
       `${lines.join("\n")}\n-# Resets Monday 00:00 Europe/London. Top 3 get a weekly win archived.`,
@@ -242,12 +288,12 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
 export const execute = wrapCommand(async (interaction) => {
   const sub = interaction.options.getSubcommand(true);
   const guildId = interaction.guildId;
-  const guildOnly = sub === "open" || sub === "list";
+  const guildOnly = sub === "create" || sub === "list";
   if (guildOnly && !guildId) {
     await interaction.editReply("Use this in a server.");
     return;
   }
-  if (sub === "open") await handleOpen(interaction, guildId as string);
+  if (sub === "create") await handleCreate(interaction, guildId as string);
   else if (sub === "list") await handleList(interaction, guildId as string);
   else if (sub === "balance") await handleBalance(interaction);
   else if (sub === "leaderboard") await handleLeaderboard(interaction);
@@ -255,20 +301,20 @@ export const execute = wrapCommand(async (interaction) => {
 });
 
 // ── Component handlers ───────────────────────────────────────────────
-
+//
 // customId grammar:
-//   bet:wager:<id>:<outcome>     — button, opens amount modal
-//   bet:modal:<id>:<outcome>     — modal submit, places wager
-//   bet:resolve:<id>:<outcome>   — button, creator-only resolve
-//   bet:pick                     — select menu, posts a fresh bet view
-registerComponent("bet", async (interaction) => {
+//   market:wager:<id>:<outcome>    — button, opens amount modal
+//   market:modal:<id>:<outcome>    — modal submit, places position
+//   market:resolve:<id>:<outcome>  — button, creator-only resolve
+//   market:pick                    — select menu, posts market view
+registerComponent("market", async (interaction) => {
   const parts = interaction.customId.split(":");
   const action = parts[1];
 
   if (action === "pick" && interaction.isStringSelectMenu()) {
     const betId = Number(interaction.values[0]);
     if (!Number.isInteger(betId)) return;
-    await interaction.reply({ ...renderBetView(betId) });
+    await interaction.reply({ ...renderMarketView(betId) });
     return;
   }
 
@@ -277,12 +323,12 @@ registerComponent("bet", async (interaction) => {
     const outcome = parts[3] as Outcome;
     const bet = getBet(betId);
     if (!bet || bet.status !== "open") {
-      await interaction.reply({ content: "This bet is closed.", ephemeral: true });
+      await interaction.reply({ content: "This market is closed.", ephemeral: true });
       return;
     }
     const modal = new ModalBuilder()
-      .setCustomId(`bet:modal:${betId}:${outcome}`)
-      .setTitle(`Wager on ${outcome.toUpperCase()} — bet #${betId}`)
+      .setCustomId(`market:modal:${betId}:${outcome}`)
+      .setTitle(`Buy ${outcome.toUpperCase()} \u2014 market #${betId}`)
       .addComponents(
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
@@ -318,12 +364,11 @@ registerComponent("bet", async (interaction) => {
       return;
     }
     const balance = getBalance(interaction.user.id);
-    // Update the public bet message, then confirm privately to the bettor.
     if (interaction.isFromMessage()) {
-      await interaction.update(renderBetView(betId));
+      await interaction.update(renderMarketView(betId));
     }
     await interaction.followUp({
-      content: `Wagered **${amount}** on **${outcome}** (bet #${betId}). Balance: **${balance}**.`,
+      content: `Bought **${amount}** on **${outcome}** (market #${betId}). Balance: **${balance}**.`,
       ephemeral: true,
     });
     return;
@@ -335,21 +380,21 @@ registerComponent("bet", async (interaction) => {
     const bet = getBet(betId);
     if (!bet) {
       await interaction.reply({
-        content: `Bet #${betId} doesn't exist.`,
+        content: `Market #${betId} doesn't exist.`,
         ephemeral: true,
       });
       return;
     }
     if (bet.creatorDiscordId !== interaction.user.id) {
       await interaction.reply({
-        content: "Only the creator can resolve this bet.",
+        content: "Only the creator can resolve this market.",
         ephemeral: true,
       });
       return;
     }
     if (bet.status !== "open") {
       await interaction.reply({
-        content: `Bet #${betId} is already ${bet.status}.`,
+        content: `Market #${betId} is already ${bet.status}.`,
         ephemeral: true,
       });
       return;
@@ -360,9 +405,13 @@ registerComponent("bet", async (interaction) => {
       await interaction.reply({ content: (err as Error).message, ephemeral: true });
       return;
     }
-    await interaction.update(renderBetView(betId));
+    await interaction.update(renderMarketView(betId));
     return;
   }
 
-  log.warn({ customId: interaction.customId }, "Unhandled bet action");
+  log.warn({ customId: interaction.customId }, "Unhandled market action");
 });
+
+// Re-exported so the expiry watcher can drive auto-cancel without
+// routing through the component dispatcher.
+export { cancelBet };

@@ -14,9 +14,13 @@ export const accounts = sqliteTable("accounts", {
   createdAt: text("created_at").notNull().default(now),
 });
 
-// A bet is always binary yes/no for v1. `guild_id` scopes `/bet list`
-// so servers can't see each other's pots. `creator_discord_id` is the
-// only account allowed to resolve for v1 (admin override lands later).
+// A market is always binary yes/no for v1. `guild_id` scopes
+// `/market list` so servers can't see each other's pots.
+// `creator_discord_id` is the only account allowed to resolve for v1
+// (admin override lands later). `channel_id` + `message_id` are
+// captured after the initial post so the expiry watcher can edit the
+// original message to show the cancelled state. `expires_at` is the
+// auto-cancel deadline; null means no expiry (resolved manually).
 export const bets = sqliteTable(
   "bets",
   {
@@ -30,8 +34,14 @@ export const bets = sqliteTable(
     winningOutcome: text("winning_outcome"),
     createdAt: text("created_at").notNull().default(now),
     resolvedAt: text("resolved_at"),
+    expiresAt: text("expires_at"),
+    channelId: text("channel_id"),
+    messageId: text("message_id"),
   },
-  (t) => [index("idx_bets_guild_status").on(t.guildId, t.status)],
+  (t) => [
+    index("idx_bets_guild_status").on(t.guildId, t.status),
+    index("idx_bets_expires").on(t.expiresAt),
+  ],
 );
 
 // One wager per (bet, discord_id). Prevents a user from hedging both

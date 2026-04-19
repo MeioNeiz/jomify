@@ -5,6 +5,7 @@ import { dispatchComponent } from "./components.js";
 // the CS module ignorant of betting while ensuring grants land in the
 // same process.
 import "./betting/listeners/cs-match-completed.js";
+import { startExpiryWatcher } from "./betting/expiry.js";
 import { config } from "./config.js";
 import { startWatcher } from "./cs/watcher.js";
 import log from "./logger.js";
@@ -25,6 +26,7 @@ client.once(Events.ClientReady, (c) => {
   log.info({ tag: c.user.tag }, "Jomify online");
   startWatcher(client);
   startWeekly(client);
+  startExpiryWatcher(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
