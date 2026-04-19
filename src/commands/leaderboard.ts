@@ -111,15 +111,13 @@ export const execute = wrapCommand(async (interaction) => {
       );
       return { entries, prev: before.entries, prevRecordedAt: before.recordedAt };
     },
-    render: (v, { cached, snapshotAt }) => {
+    render: (v) => {
       const rows = buildRows(v.entries, v.prev);
-      // One footer line. Left side tells you when the shown data is
-      // from (only when stale); right side tells you what the arrows
-      // are relative to. Omitted entirely on a first-ever run.
+      // Only two bits of context worth showing: what the arrows are
+      // relative to, and whether Leetify's currently unavailable
+      // (which implies the data is stale). Snapshot freshness is
+      // redundant with both.
       const bits: string[] = [];
-      if (cached && snapshotAt) {
-        bits.push(`snapshot ${relTime(snapshotAt)}`);
-      }
       if (v.prevRecordedAt) {
         bits.push(`arrows since ${relTime(v.prevRecordedAt)}`);
       }
