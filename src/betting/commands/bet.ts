@@ -8,18 +8,20 @@ import {
   getCurrentStandings,
   getRecentLedger,
 } from "../store.js";
-import { MARKET_EMBED_COLOUR } from "../ui.js";
+import { CURRENCY, MARKET_EMBED_COLOUR } from "../ui.js";
 
 export const data = new SlashCommandBuilder()
   .setName("bet")
-  .setDescription("Your credits and the betting leaderboard")
+  .setDescription(`Your ${CURRENCY.plural} and the betting leaderboard`)
   .addSubcommand((sub) =>
-    sub.setName("balance").setDescription("Show your credits and recent ledger"),
+    sub
+      .setName("balance")
+      .setDescription(`Show your ${CURRENCY.plural} and recent ledger`),
   )
   .addSubcommand((sub) =>
     sub
       .setName("leaderboard")
-      .setDescription("Who's ahead on credits")
+      .setDescription(`Who's ahead on ${CURRENCY.plural}`)
       .addStringOption((opt) =>
         opt
           .setName("view")
@@ -46,7 +48,7 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
   const body = rows.length ? table(rows) : "_No activity yet._";
   const e = embed(MARKET_EMBED_COLOUR)
     .setTitle("Your balance")
-    .setDescription(`**${balance} credits**\n\n${body}`);
+    .setDescription(`**${CURRENCY.format(balance)}**\n\n${body}`);
   await interaction.editReply({ embeds: [e] });
 }
 
@@ -71,11 +73,14 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
 
   const rows = getCurrentStandings(10);
   if (!rows.length) {
-    await interaction.editReply("No balances yet — play a match to get started.");
+    await interaction.editReply(
+      `No ${CURRENCY.plural} yet — play a match to get started.`,
+    );
     return;
   }
   const lines = rows.map(
-    (r, i) => `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.balance}** credits`,
+    (r, i) =>
+      `${rankPrefix(i)} <@${r.discordId}> \u2014 **${CURRENCY.format(r.balance)}**`,
   );
   const e = embed(MARKET_EMBED_COLOUR)
     .setTitle("This week's standings")

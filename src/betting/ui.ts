@@ -5,6 +5,20 @@
 import { ButtonStyle } from "discord.js";
 import type { EmbedKind } from "../ui.js";
 
+/**
+ * In-game currency label. Centralised so a rename (shekels → gelt →
+ * whatever) touches this one file. `format` handles singular/plural
+ * so "1 shekel" reads right alongside "5 shekels".
+ */
+export const CURRENCY = {
+  singular: "shekel",
+  plural: "shekels",
+  /** "1 shekel" / "5 shekels". Use for running copy. */
+  format: (n: number) => `${n} ${n === 1 ? "shekel" : "shekels"}`,
+  /** "Shekels" — sentence/label case, plural. Use for field titles. */
+  label: "Shekels",
+} as const;
+
 export const MARKET_COPY = {
   title: (id: number, question: string) => `Market #${id} \u2014 ${question}`,
   volumeLabel: "Pool",

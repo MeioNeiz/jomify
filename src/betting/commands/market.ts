@@ -28,6 +28,7 @@ import {
   setBetMessage,
 } from "../store.js";
 import {
+  CURRENCY,
   MARKET_BUTTONS,
   MARKET_COPY,
   MARKET_DURATIONS,
@@ -255,7 +256,9 @@ registerComponent("market", async (interaction) => {
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
             .setCustomId("amount")
-            .setLabel(`Credits to stake (balance: ${getBalance(interaction.user.id)})`)
+            .setLabel(
+              `${CURRENCY.label} to stake (balance: ${getBalance(interaction.user.id)})`,
+            )
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setPlaceholder("e.g. 5")
