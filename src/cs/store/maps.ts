@@ -1,6 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
-import db from "../../db.js";
-import { matches, matchStats } from "../../schema.js";
+import db from "../db.js";
+import { matches, matchStats } from "../schema.js";
 
 export interface MapStats {
   mapName: string;

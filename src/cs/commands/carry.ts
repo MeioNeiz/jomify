@@ -1,9 +1,13 @@
 import { SlashCommandBuilder } from "discord.js";
-import { refreshPlayers } from "../cs/refresh.js";
-import { type CarryRow, getCarryStats, getMostRecentMatchTime } from "../cs/store.js";
-import { freshnessSuffix, signed } from "../helpers.js";
-import { embed, rankPrefix } from "../ui.js";
-import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
+import {
+  requireLinkedUser,
+  respondWithRevalidate,
+  wrapCommand,
+} from "../../commands/handler.js";
+import { freshnessSuffix, signed } from "../../helpers.js";
+import { embed, rankPrefix } from "../../ui.js";
+import { refreshPlayers } from "../refresh.js";
+import { type CarryRow, getCarryStats, getMostRecentMatchTime } from "../store.js";
 
 const DEFAULT_DAYS = 30;
 

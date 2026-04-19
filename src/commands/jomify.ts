@@ -9,11 +9,6 @@ import { embed } from "../ui.js";
 import { wrapCommand } from "./handler.js";
 import { type Command, commands } from "./index.js";
 
-/**
- * Category layout for the overview. Ordering within each list decides
- * the display order; anything not listed falls into "Other" so newly
- * added commands surface in /jomify without needing a code change here.
- */
 const CATEGORIES: { title: string; commands: string[] }[] = [
   {
     title: "Stats",
@@ -29,7 +24,11 @@ const CATEGORIES: { title: string; commands: string[] }[] = [
   },
   {
     title: "Admin",
-    commands: ["track", "link", "setchannel", "import", "say", "metrics", "jomify"],
+    commands: ["track", "link", "import"],
+  },
+  {
+    title: "Bot",
+    commands: ["setchannel", "metrics", "say"],
   },
 ];
 
@@ -37,6 +36,7 @@ function categorise(
   all: [string, Command][],
 ): { title: string; entries: [string, Command][] }[] {
   const remaining = new Map(all);
+  remaining.delete("jomify");
   const out: { title: string; entries: [string, Command][] }[] = [];
   for (const cat of CATEGORIES) {
     const entries: [string, Command][] = [];
@@ -93,8 +93,6 @@ function describeOption(opt: APIApplicationCommandBasicOption): {
   const required = opt.required ? "required" : "optional";
   const type = optionTypeLabel(opt.type);
   const bits: string[] = [`${type}, ${required}`];
-  // `choices` exists on string/integer/number options. Other basic
-  // options (user/channel/etc) have no choices list.
   const choices =
     "choices" in opt && Array.isArray(opt.choices) && opt.choices.length > 0
       ? opt.choices
@@ -112,13 +110,9 @@ function describeOption(opt: APIApplicationCommandBasicOption): {
 
 type CommandJSON = ReturnType<SlashCommandBuilder["toJSON"]>;
 
-// No `.addChoices` on the `command` option: Discord caps choice lists at
-// 25 and we'd have to hand-maintain it here every time a command is
-// added. Users type the name freely instead — autocomplete from Discord
-// handles typos fine and new commands show up in /help automatically.
 export const data = new SlashCommandBuilder()
   .setName("jomify")
-  .setDescription("List Jomify commands or show details for one")
+  .setDescription("List commands or show details for one")
   .addStringOption((opt) =>
     opt.setName("command").setDescription("Command name for a detailed view"),
   );
@@ -181,9 +175,11 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  const found = commands.find(([name]) => name === target);
+  const normalised = target.trim().replace(/^\//, "").toLowerCase();
+  const parts = normalised.split(/\s+/);
+  const found = commands.find(([name]) => name === parts[0]);
   if (!found) {
-    await interaction.editReply(`No command called \`/${target}\`.`);
+    await interaction.editReply(`No command called \`/${parts[0]}\`.`);
     return;
   }
   await interaction.editReply({ embeds: [renderDetail(found[0], found[1])] });

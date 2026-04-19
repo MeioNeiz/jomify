@@ -97,7 +97,11 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
       });
       finalStatus = res.status;
 
-      const retryable = res.status === 429 || res.status === 502 || res.status === 503;
+      const retryable =
+        res.status === 429 ||
+        res.status === 500 ||
+        res.status === 502 ||
+        res.status === 503;
       if (retryable && attempt < MAX_RETRIES) {
         retries++;
         const after = res.headers.get("Retry-After");
@@ -109,21 +113,10 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
 
       if (!res.ok) {
         if (retryable) tripCircuit();
-        // 404 = player has no Leetify profile; persistent, expected;
-        // kept at debug to avoid spamming the error table.
-        if (res.status !== 404) {
-          logError(
-            "leetify:fetch",
-            new Error(`Leetify API error: ${res.status} ${res.statusText}`),
-            { endpoint, status: res.status, attempts: attempt + 1 },
-            "warn",
-          );
-        } else {
-          log.debug(
-            { status: res.status, endpoint, attempts: attempt + 1 },
-            "Leetify API error",
-          );
-        }
+        log.debug(
+          { status: res.status, endpoint, attempts: attempt + 1 },
+          "Leetify API error",
+        );
         throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
       }
 

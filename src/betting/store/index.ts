@@ -2,15 +2,19 @@ export { adjustBalance, ensureAccount, getBalance } from "./accounts.js";
 export {
   type Bet,
   type BetStatus,
+  type CreateBetOptions,
   cancelBet,
   createBet,
+  extendBet,
   getBet,
   getExpiredOpenBets,
+  getOpenResolverBets,
   listOpenBets,
   type Outcome,
   reopenBet,
   resolveBet,
   setBetMessage,
+  setResolverState,
 } from "./bets.js";
 export {
   type Dispute,

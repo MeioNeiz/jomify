@@ -4,14 +4,21 @@ import { getNotifyChannel } from "../store.js";
 import { quickScan, SUSPECT_THRESHOLD } from "./analyse.js";
 import type { LeetifyMatchDetails } from "./leetify/types.js";
 import {
+  getAllTrackedSteamIds,
   getDiscordId,
   getGuildsForSteamId,
   isOpponentAnalysed,
   markOpponentAnalysed,
   markStreakAlerted,
+  updateGuildWinRecord,
 } from "./store.js";
 
-export async function sendToGuilds(client: Client, steamId: string, embed: EmbedBuilder) {
+export async function sendToGuilds(
+  client: Client,
+  steamId: string,
+  embed: EmbedBuilder,
+  content?: string,
+) {
   const guilds = getGuildsForSteamId(steamId);
   for (const guildId of guilds) {
     const channelId = getNotifyChannel(guildId);
@@ -19,9 +26,7 @@ export async function sendToGuilds(client: Client, steamId: string, embed: Embed
     try {
       const channel = await client.channels.fetch(channelId);
       if (channel?.isTextBased()) {
-        await (channel as TextChannel).send({
-          embeds: [embed],
-        });
+        await (channel as TextChannel).send({ content, embeds: [embed] });
       }
     } catch (err) {
       log.error({ guildId, channelId, err }, "Failed to send alert");
@@ -68,6 +73,24 @@ export function checkBigMatch(details: LeetifyMatchDetails, steamId: string): st
 
 // ── Streak alerts ──
 
+const WIN_MILESTONES: Record<number, string> = {
+  6: "\u{1F525}\u{1F525}\u{1F525} someone stop this person!",
+  10: "operating on a different plane of existence.",
+  12: "actually inhuman. What is happening.",
+  14: "cannot be contained. Security has been called.",
+  16: "CANNOT BE STOPPED. Send help.",
+};
+
+const WIN_MILESTONE_COUNTS = new Set(Object.keys(WIN_MILESTONES).map(Number));
+
+const LOSS_MESSAGES: Record<number, string> = {
+  3: "Maybe take a break?",
+  6: "Yikes.",
+  10: "OPEN YOUR EYES SWITCH ON MONITOR AND PLUG IN KEYBOARD.",
+};
+
+const LOSS_MILESTONE_COUNTS = new Set(Object.keys(LOSS_MESSAGES).map(Number));
+
 export async function checkStreakAlerts(
   client: Client,
   steamId: string,
@@ -80,41 +103,56 @@ export async function checkStreakAlerts(
 ): Promise<void> {
   const { streakType, streakCount, lastAlertedCount } = streak;
 
-  if (streakType === "win" && streakCount >= 3) {
-    if (streakCount > lastAlertedCount) {
-      const hype =
-        streakCount >= 5
-          ? `${player} is UNSTOPPABLE! ` +
-            `\u{1F525}\u{1F525}\u{1F525} ` +
-            `**${streakCount}** wins in a row!`
-          : `${player} is on fire! \u{1F525} **${streakCount}** wins in a row`;
-
-      const embed = new EmbedBuilder()
-        .setTitle("Win Streak!")
-        .setColor(0x00ff00)
-        .setDescription(hype);
-      await sendToGuilds(client, steamId, embed);
-      markStreakAlerted(steamId, streakCount);
+  if (
+    streakType === "win" &&
+    WIN_MILESTONE_COUNTS.has(streakCount) &&
+    streakCount > lastAlertedCount
+  ) {
+    const guilds = getGuildsForSteamId(steamId);
+    for (const guildId of guilds) {
+      const channelId = getNotifyChannel(guildId);
+      if (!channelId) continue;
+      try {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.isTextBased()) continue;
+        const isRecord = updateGuildWinRecord(guildId, steamId, streakCount);
+        const suffix = WIN_MILESTONES[streakCount];
+        let desc = `${player} — **${streakCount}** wins in a row — ${suffix}`;
+        if (isRecord) desc += `\n\n\u{1F3C6} **New server record!**`;
+        const embed = new EmbedBuilder()
+          .setTitle("Win Streak!")
+          .setColor(0x00ff00)
+          .setDescription(desc);
+        await (channel as TextChannel).send({ embeds: [embed] });
+      } catch (err) {
+        log.error({ guildId, channelId, err }, "Failed to send streak alert");
+      }
     }
+    markStreakAlerted(steamId, streakCount);
   }
 
-  if (streakType === "loss" && streakCount >= 3) {
-    const atThreshold = streakCount % 2 === 1 && streakCount > lastAlertedCount;
-
-    if (atThreshold) {
-      const desc = `${player} has lost **${streakCount}** in a row \u2014 time for a break?`;
-
-      const embed = new EmbedBuilder()
-        .setTitle("Rough Patch")
-        .setColor(0xff6600)
-        .setDescription(desc);
-      await sendToGuilds(client, steamId, embed);
-      markStreakAlerted(steamId, streakCount);
-    }
+  if (
+    streakType === "loss" &&
+    LOSS_MILESTONE_COUNTS.has(streakCount) &&
+    streakCount > lastAlertedCount
+  ) {
+    const discordId = getDiscordId(steamId);
+    const suffix = LOSS_MESSAGES[streakCount];
+    const desc = `${player} has lost **${streakCount}** in a row \u2014 ${suffix}`;
+    const embed = new EmbedBuilder()
+      .setTitle("Rough Patch")
+      .setColor(0xff6600)
+      .setDescription(desc);
+    await sendToGuilds(client, steamId, embed, discordId ? `<@${discordId}>` : undefined);
+    markStreakAlerted(steamId, streakCount);
   }
 }
 
 // ── Opponent scanning ──
+
+function csrepUrl(steamId: string): string {
+  return `https://csrep.gg/player/${steamId}`;
+}
 
 export async function scanOpponents(
   client: Client,
@@ -128,41 +166,73 @@ export async function scanOpponents(
     (s) => s.initial_team_number !== tracked.initial_team_number,
   );
 
-  const susPlayers: {
-    name: string;
-    score: number;
-  }[] = [];
+  const susPlayers: { name: string; steamId: string; score: number }[] = [];
 
   for (const opp of opponents) {
     if (isOpponentAnalysed(details.id, opp.steam64_id)) continue;
     markOpponentAnalysed(details.id, opp.steam64_id);
-
     const score = quickScan(opp);
     if (score >= SUSPECT_THRESHOLD) {
-      susPlayers.push({
-        name: opp.name,
-        score,
-      });
+      susPlayers.push({ name: opp.name, steamId: opp.steam64_id, score });
     }
   }
 
   if (!susPlayers.length) return;
 
+  // Collect all tracked players on the same team so we notify every guild
+  // that had a player in this match, sending only one message per guild.
+  const allTracked = new Set(getAllTrackedSteamIds());
+  const trackedTeam = details.stats
+    .filter(
+      (s) =>
+        s.initial_team_number === tracked.initial_team_number &&
+        allTracked.has(s.steam64_id),
+    )
+    .map((s) => s.steam64_id);
+
   susPlayers.sort((a, b) => b.score - a.score);
   const lines = susPlayers.map(
-    (p) => `\u26A0\uFE0F **${p.name}** ` + `(score: ${p.score.toFixed(1)})`,
+    (p) =>
+      `\u26A0\uFE0F [**${p.name}**](${csrepUrl(p.steamId)}) (score: ${p.score.toFixed(1)})`,
   );
 
-  const embed = new EmbedBuilder()
-    .setTitle("Sussy Opponents Detected")
-    .setColor(0xfee75c)
-    .setDescription(
-      `In ${mentionOrName(trackedSteamId, "your")}'s last match on ` +
-        `**${details.map_name}**:\n\n` +
-        lines.join("\n"),
-    )
-    .setFooter({
-      text: "Single-match scan \u2022 not definitive",
-    });
-  await sendToGuilds(client, trackedSteamId, embed);
+  // One message per guild, mentioning the tracked player(s) in that guild
+  const seenGuilds = new Set<string>();
+  for (const memberId of trackedTeam) {
+    for (const guildId of getGuildsForSteamId(memberId)) {
+      if (seenGuilds.has(guildId)) continue;
+      seenGuilds.add(guildId);
+
+      const channelId = getNotifyChannel(guildId);
+      if (!channelId) continue;
+      try {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel?.isTextBased()) continue;
+
+        // Mention all tracked players in this guild who were on the team
+        const mentions = trackedTeam
+          .filter((id) => getGuildsForSteamId(id).includes(guildId))
+          .map((id) => getDiscordId(id))
+          .filter((id): id is string => id != null)
+          .map((id) => `<@${id}>`)
+          .join(" ");
+
+        const embed = new EmbedBuilder()
+          .setTitle("Likely Cheater Detected")
+          .setColor(0xfee75c)
+          .setDescription(
+            `Likely cheater in a recent match on **${details.map_name}**:\n\n` +
+              lines.join("\n"),
+          )
+          .setFooter({ text: "Single-match scan \u2022 check csrep before reporting" });
+
+        await (channel as TextChannel).send({
+          content: mentions || undefined,
+          embeds: [embed],
+        });
+      } catch (err) {
+        log.error({ guildId, channelId: channelId, err }, "Failed to send sus alert");
+      }
+    }
+  }
 }

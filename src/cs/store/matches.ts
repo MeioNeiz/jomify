@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import db, { sqlite } from "../../db.js";
-import { matches, matchStats, processedMatches } from "../../schema.js";
+import db, { sqlite } from "../db.js";
 import type { LeetifyMatchDetails, LeetifyPlayerStats } from "../leetify/types.js";
+import { matches, matchStats, processedMatches } from "../schema.js";
 
 export function isMatchProcessed(matchId: string, steamId: string): boolean {
   const row = db
@@ -394,6 +394,18 @@ function toMatchRow(r: {
   };
 }
 
+export function getMatchStatForPlayer(
+  matchId: string,
+  steamId: string,
+): LeetifyPlayerStats | null {
+  const row = db
+    .select({ raw: matchStats.raw })
+    .from(matchStats)
+    .where(and(eq(matchStats.matchId, matchId), eq(matchStats.steamId, steamId)))
+    .get();
+  return row ? (JSON.parse(row.raw) as LeetifyPlayerStats) : null;
+}
+
 export function getPlayerMatchStats(steamId: string, limit = 20): MatchRow[] {
   return db
     .select({
@@ -409,6 +421,38 @@ export function getPlayerMatchStats(steamId: string, limit = 20): MatchRow[] {
     .limit(limit)
     .all()
     .map(toMatchRow);
+}
+
+/**
+ * First saved match for `steamId` that finished strictly after `sinceIso`.
+ * Timestamps on either side may be ISO-T-with-Z (what Leetify gives us)
+ * or SQLite's space-separated format (what `datetime('now')` produces);
+ * `datetime()` normalises both so the comparison is correct either way.
+ * Returns null until a qualifying match is saved — drives the betting
+ * resolver's "first match after market opened" decision.
+ */
+export function getFirstMatchAfter(steamId: string, sinceIso: string): MatchRow | null {
+  const row = sqlite
+    .query(
+      `SELECT
+         ms.match_id   AS matchId,
+         m.map_name    AS mapName,
+         m.finished_at AS finishedAt,
+         ms.raw        AS raw
+       FROM match_stats ms
+       JOIN matches m ON m.match_id = ms.match_id
+       WHERE ms.steam_id = ?
+         AND datetime(m.finished_at) > datetime(?)
+       ORDER BY m.finished_at ASC
+       LIMIT 1`,
+    )
+    .get(steamId, sinceIso) as {
+    matchId: string;
+    mapName: string;
+    finishedAt: string;
+    raw: string;
+  } | null;
+  return row ? toMatchRow(row) : null;
 }
 
 /** Get matches within the last N hours. */

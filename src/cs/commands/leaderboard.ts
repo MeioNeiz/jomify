@@ -1,15 +1,15 @@
 import { SlashCommandBuilder } from "discord.js";
-import { isLeetifyCircuitOpen } from "../cs/leetify/client.js";
+import { respondWithRevalidate, wrapCommand } from "../../commands/handler.js";
+import { fetchGuildProfiles, relTime } from "../../helpers.js";
+import { embed, pad, rankPrefix, table } from "../../ui.js";
+import { isLeetifyCircuitOpen } from "../leetify/client.js";
 import {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
   getLeaderboardBefore,
   getTrackedPlayers,
   saveLeaderboardSnapshot,
-} from "../cs/store.js";
-import { fetchGuildProfiles, relTime } from "../helpers.js";
-import { embed, pad, rankPrefix, table } from "../ui.js";
-import { respondWithRevalidate, wrapCommand } from "./handler.js";
+} from "../store.js";
 
 export const data = new SlashCommandBuilder()
   .setName("leaderboard")

@@ -2,17 +2,36 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
-const DB = join(import.meta.dir, "..", "jomify.db");
-const db = new Database(DB, { readonly: true });
+const DBS = {
+  core: "jomify.db",
+  cs: "jomify-cs.db",
+  betting: "jomify-betting.db",
+} as const;
+type Which = keyof typeof DBS;
 
-const arg = process.argv.slice(2).join(" ").trim();
+const argv = process.argv.slice(2);
+let which: Which = "core";
+const filtered: string[] = [];
+for (const a of argv) {
+  if (a === "--cs") which = "cs";
+  else if (a === "--betting") which = "betting";
+  else if (a === "--core") which = "core";
+  else filtered.push(a);
+}
 
+const arg = filtered.join(" ").trim();
 if (!arg || arg === "-h" || arg === "--help") {
-  console.error("Usage: bun scripts/db.ts '<sql>'");
-  console.error("       bun scripts/db.ts .tables        # list tables");
-  console.error("       bun scripts/db.ts .schema <tbl>  # table schema");
+  console.error("Usage: bun scripts/db.ts [--cs|--betting] '<sql>'");
+  console.error("       bun scripts/db.ts [--cs|--betting] .tables");
+  console.error("       bun scripts/db.ts [--cs|--betting] .schema <tbl>");
+  console.error(
+    "Default DB: core (jomify.db). --cs → jomify-cs.db, --betting → jomify-betting.db.",
+  );
   process.exit(1);
 }
+
+const DB = join(import.meta.dir, "..", DBS[which]);
+const db = new Database(DB, { readonly: true });
 
 let sql = arg;
 if (arg === ".tables") {

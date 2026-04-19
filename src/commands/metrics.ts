@@ -3,9 +3,9 @@ import { getCommandStats } from "../store.js";
 import { embed, pad, table } from "../ui.js";
 import { wrapCommand } from "./handler.js";
 
-const DEFAULT_DAYS = 7;
-const MIN_DAYS = 1;
-const MAX_DAYS = 90;
+const METRICS_DEFAULT_DAYS = 7;
+const METRICS_MIN_DAYS = 1;
+const METRICS_MAX_DAYS = 90;
 
 const CMD_WIDTH = 14;
 const COUNT_WIDTH = 4;
@@ -14,18 +14,18 @@ const API_WIDTH = 5;
 
 export const data = new SlashCommandBuilder()
   .setName("metrics")
-  .setDescription("Command timing + API-call summary (admin)")
+  .setDescription("Command timing + API-call summary")
   .addIntegerOption((opt) =>
     opt
       .setName("days")
-      .setDescription(`Window size in days (default ${DEFAULT_DAYS})`)
-      .setMinValue(MIN_DAYS)
-      .setMaxValue(MAX_DAYS),
+      .setDescription(`Window size in days (default ${METRICS_DEFAULT_DAYS})`)
+      .setMinValue(METRICS_MIN_DAYS)
+      .setMaxValue(METRICS_MAX_DAYS),
   )
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
 export const execute = wrapCommand(async (interaction) => {
-  const days = interaction.options.getInteger("days") ?? DEFAULT_DAYS;
+  const days = interaction.options.getInteger("days") ?? METRICS_DEFAULT_DAYS;
   const rows = getCommandStats(days);
 
   if (!rows.length) {
@@ -55,13 +55,16 @@ export const execute = wrapCommand(async (interaction) => {
     );
   });
 
-  const e = embed()
-    .setTitle(`Command Metrics (Last ${days}d)`)
-    .setDescription(
-      `${table([header, ...body])}\n` +
-        "-# `ttf` = p50 time-to-first-reply (what the user sees). " +
-        "`p50`/`p95` = total wall clock incl. revalidate. " +
-        "Query `metrics` in Datasette for TTL and error-message detail.",
-    );
-  await interaction.editReply({ embeds: [e] });
+  await interaction.editReply({
+    embeds: [
+      embed()
+        .setTitle(`Command Metrics (Last ${days}d)`)
+        .setDescription(
+          `${table([header, ...body])}\n` +
+            "-# `ttf` = p50 time-to-first-reply (what the user sees). " +
+            "`p50`/`p95` = total wall clock incl. revalidate. " +
+            "Query `metrics` in Datasette for TTL and error-message detail.",
+        ),
+    ],
+  });
 });

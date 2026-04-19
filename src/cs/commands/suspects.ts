@@ -5,22 +5,22 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from "discord.js";
-import { registerComponent } from "../components.js";
-import { analyseStats } from "../cs/analyse.js";
+import { requireLinkedUser, wrapCommand } from "../../commands/handler.js";
+import { registerComponent } from "../../components.js";
+import log from "../../logger.js";
+import { embed } from "../../ui.js";
+import { analyseStats } from "../analyse.js";
 import {
   getProfile,
   isLeetifyCircuitOpen,
   LeetifyNotFoundError,
-} from "../cs/leetify/client.js";
+} from "../leetify/client.js";
 import {
   type EncounterRow,
   getAllTrackedSteamIds,
   getEncounters,
   getPlayerMatchStats,
-} from "../cs/store.js";
-import log from "../logger.js";
-import { embed } from "../ui.js";
-import { requireLinkedUser, wrapCommand } from "./handler.js";
+} from "../store.js";
 
 const DEFAULT_DAYS = 7;
 const MAX_DAYS = 90;
@@ -171,7 +171,7 @@ async function refineEntry(entry: SuspectEntry): Promise<SuspectEntry> {
 
 function renderLine(s: SuspectEntry): string {
   const v = verdictFor(s.score);
-  const profileUrl = `https://steamcommunity.com/profiles/${s.steamId}`;
+  const profileUrl = `https://csrep.gg/player/${s.steamId}`;
   const main =
     `${v.icon} [${s.name}](${profileUrl}) **${s.score.toFixed(1)}**` +
     ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`;
@@ -363,7 +363,7 @@ registerComponent("suspects", async (interaction) => {
     .filter((c) => !c.flagged && c.z > 1.5)
     .sort((a, b) => b.z - a.z);
   const name = history[0]?.raw.name ?? steamId;
-  const profileUrl = `https://steamcommunity.com/profiles/${steamId}`;
+  const profileUrl = `https://csrep.gg/player/${steamId}`;
   const lines: string[] = [];
   lines.push(`Score **${score.toFixed(1)}** across ${history.length} recent matches.`);
   if (flagged.length) {

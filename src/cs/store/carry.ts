@@ -1,4 +1,4 @@
-import { sqlite } from "../../db.js";
+import { sqlite } from "../db.js";
 
 /**
  * Per-pair carry attribution.

@@ -1,6 +1,8 @@
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
-import { isLeetifyCircuitOpen } from "../cs/leetify/client.js";
-import { resolveSteamId } from "../cs/steam/client.js";
+import { wrapCommand } from "../../commands/handler.js";
+import { requireGuild } from "../../helpers.js";
+import { isLeetifyCircuitOpen } from "../leetify/client.js";
+import { resolveSteamId } from "../steam/client.js";
 import {
   addTrackedPlayer,
   getAllLinkedAccounts,
@@ -9,10 +11,8 @@ import {
   getTrackedPlayers,
   isLeetifyUnknown,
   removeTrackedPlayer,
-} from "../cs/store.js";
-import { backfillPlayer } from "../cs/watcher.js";
-import { requireGuild } from "../helpers.js";
-import { wrapCommand } from "./handler.js";
+} from "../store.js";
+import { backfillPlayer } from "../watcher.js";
 
 export const data = new SlashCommandBuilder()
   .setName("track")

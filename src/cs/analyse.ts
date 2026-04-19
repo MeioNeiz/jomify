@@ -49,7 +49,7 @@ export interface AnalysisResult {
   score: number;
 }
 
-export const SUSPECT_THRESHOLD = 4;
+export const SUSPECT_THRESHOLD = 8;
 
 /** Analyse an array of per-match stats for suspicious patterns. */
 export function analyseStats(stats: LeetifyPlayerStats[]): AnalysisResult {

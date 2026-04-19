@@ -46,6 +46,8 @@ export {
   type EncounterRow,
   getBestMatch,
   getEncounters,
+  getFirstMatchAfter,
+  getMatchStatForPlayer,
   getMostRecentMatchTime,
   getPlayerHistory,
   getPlayerMatchStats,
@@ -72,5 +74,6 @@ export {
   getPlayerStreak,
   markStreakAlerted,
   type PlayerStreak,
+  updateGuildWinRecord,
   updatePlayerStreak,
 } from "./streaks.js";

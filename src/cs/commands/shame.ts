@@ -1,16 +1,20 @@
 import { SlashCommandBuilder } from "discord.js";
-import type { LeetifyPlayerStats } from "../cs/leetify/types.js";
-import { refreshPlayers } from "../cs/refresh.js";
-import { getMostRecentMatchTime, getRecentMatchesSince } from "../cs/store.js";
+import {
+  requireLinkedUser,
+  respondWithRevalidate,
+  wrapCommand,
+} from "../../commands/handler.js";
 import {
   fmt,
   freshnessSuffix,
   kdRatio,
   outcomeTag,
   requireTrackedGuild,
-} from "../helpers.js";
-import { embed, rankPrefix } from "../ui.js";
-import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
+} from "../../helpers.js";
+import { embed, rankPrefix } from "../../ui.js";
+import type { LeetifyPlayerStats } from "../leetify/types.js";
+import { refreshPlayers } from "../refresh.js";
+import { getMostRecentMatchTime, getRecentMatchesSince } from "../store.js";
 
 export const data = new SlashCommandBuilder()
   .setName("shame")

@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
-import db from "../../db.js";
-import { playerStreaks } from "../../schema.js";
+import db from "../db.js";
+import { guildWinStreakRecords, playerStreaks } from "../schema.js";
 
 export interface PlayerStreak {
   steamId: string;
@@ -89,4 +89,25 @@ export function markStreakAlerted(steamId: string, count: number): void {
     .set({ lastAlertedCount: count })
     .where(eq(playerStreaks.steamId, steamId))
     .run();
+}
+
+export function updateGuildWinRecord(
+  guildId: string,
+  steamId: string,
+  count: number,
+): boolean {
+  const current = db
+    .select()
+    .from(guildWinStreakRecords)
+    .where(eq(guildWinStreakRecords.guildId, guildId))
+    .get();
+  if (current && count <= current.recordCount) return false;
+  db.insert(guildWinStreakRecords)
+    .values({ guildId, recordCount: count, holderSteamId: steamId })
+    .onConflictDoUpdate({
+      target: guildWinStreakRecords.guildId,
+      set: { recordCount: count, holderSteamId: steamId, setAt: nowExpr },
+    })
+    .run();
+  return true;
 }

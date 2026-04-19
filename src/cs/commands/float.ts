@@ -1,7 +1,7 @@
 import { decodeLink } from "@csfloat/cs2-inspect-serializer";
 import { SlashCommandBuilder } from "discord.js";
-import { embed } from "../ui.js";
-import { wrapCommand } from "./handler.js";
+import { wrapCommand } from "../../commands/handler.js";
+import { embed } from "../../ui.js";
 
 export const data = new SlashCommandBuilder()
   .setName("float")
