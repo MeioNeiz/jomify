@@ -5,20 +5,20 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from "discord.js";
-import { analyseStats } from "../analyse.js";
 import { registerComponent } from "../components.js";
+import { analyseStats } from "../cs/analyse.js";
 import {
   getProfile,
   isLeetifyCircuitOpen,
   LeetifyNotFoundError,
-} from "../leetify/client.js";
-import log from "../logger.js";
+} from "../cs/leetify/client.js";
 import {
   type EncounterRow,
   getAllTrackedSteamIds,
   getEncounters,
   getPlayerMatchStats,
-} from "../store.js";
+} from "../cs/store.js";
+import log from "../logger.js";
 import { embed } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
 
@@ -48,12 +48,12 @@ export const data = new SlashCommandBuilder()
 interface SuspectEntry {
   steamId: string;
   name: string;
-  /** Local z-score composite from analyseStats against our stored matches. */
+  /** Raw local z-score composite from analyseStats — unweighted, for debug. */
   localScore: number;
   /**
-   * Same local score plus a bump for extreme Leetify-lifetime values
-   * (high aim rating / HS accuracy / low preaim). Falls back to
-   * localScore when the profile hasn't been fetched or is unavailable.
+   * Sample-size-weighted local score (localScore * min(1, matchCount/3))
+   * plus, for strong-sus players only, a bump from extreme Leetify
+   * lifetime values. This is what's used for sorting, bands and display.
    */
   score: number;
   matchCount: number;
@@ -69,6 +69,15 @@ interface SuspectEntry {
   } | null;
   /** True if we tried to fetch and Leetify gave a usable response. */
   refined: boolean;
+}
+
+/**
+ * Sample-size weighting: a 1-match player needs 3× the raw local score
+ * to tie a 3+ match player. Caps at matchCount ≥ 3 so larger samples
+ * aren't further rewarded — we just want to penalise tiny-n noise.
+ */
+function weightedScore(localScore: number, matchCount: number): number {
+  return localScore * Math.min(1, matchCount / 3);
 }
 
 function verdictFor(score: number): { icon: string } {
@@ -102,11 +111,12 @@ function buildEntry(
     if (e.relationship === "with") withCount++;
     else vsCount++;
   }
+  const adjustedScore = weightedScore(score, history.length);
   return {
     steamId,
     name: displayName,
     localScore: score,
-    score,
+    score: adjustedScore,
     matchCount: history.length,
     encounterCount: encounters.length,
     withCount,
@@ -145,7 +155,7 @@ async function refineEntry(entry: SuspectEntry): Promise<SuspectEntry> {
     return {
       ...entry,
       profile: { aim, hs, preaim, bump },
-      score: entry.localScore + bump,
+      score: weightedScore(entry.localScore, entry.matchCount) + bump,
       refined: true,
     };
   } catch (err) {
@@ -213,7 +223,8 @@ function buildPayload(
   const bands =
     "-# \uD83D\uDEA9 \u22658 strong sus \u00B7 \u26A0\uFE0F \u22655 sussy " +
     "\u00B7 \uD83E\uDD14 \u22653 elevated \u00B7 \u2705 clean. " +
-    "Score = local z-score + Leetify lifetime bump (aim/HS/preaim).";
+    "Score = 30-day local z-score (weighted by match count). " +
+    "Leetify lifetime shown for strong-sus players only.";
   const phaseNote =
     phase === "refining"
       ? "-# \u23F3 Refining with Leetify profile lookups\u2026"
@@ -300,12 +311,13 @@ export const execute = wrapCommand(async (interaction) => {
 
   if (leetifyDown) return;
 
-  // Phase 2: fetch each surfaced player's Leetify profile in parallel
-  // and re-render with the refined score + lifetime stats. We only
-  // refine the top-N we'd actually show — the others don't need round
-  // trips since they won't appear.
-  const sortedByLocal = [...entries].sort((a, b) => b.score - a.score);
-  const toRefine = sortedByLocal.slice(0, MAX_SURFACED);
+  // Phase 2: fetch Leetify profiles only for players who are *already*
+  // strong-sus on the weighted local score (≥8, matches the flag band
+  // in verdictFor). Most invocations will do 0-3 fetches instead of
+  // 25 — the user only cares about 30-day signal anyway, so we don't
+  // need lifetime stats for the marginal cases.
+  const STRONG_SUS_THRESHOLD = 8;
+  const toRefine = entries.filter((e) => e.score >= STRONG_SUS_THRESHOLD);
   const toRefineIds = new Set(toRefine.map((e) => e.steamId));
   const results = await Promise.allSettled(toRefine.map(refineEntry));
   const refinedById = new Map<string, SuspectEntry>();
