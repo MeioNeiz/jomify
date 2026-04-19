@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+// Use in-memory DB for tests
+import { sqlite as csDb } from "../src/cs/db.js";
 import {
   addTrackedPlayer,
   clearLeetifyUnknown,
@@ -15,7 +17,6 @@ import {
   removeTrackedPlayer,
   saveLeaderboardSnapshot,
 } from "../src/cs/store.js";
-// Use in-memory DB for tests
 import { sqlite as db } from "../src/db.js";
 import { getNotifyChannel, setNotifyChannel } from "../src/store.js";
 
@@ -24,13 +25,13 @@ const STEAM = "76561198000000001";
 const DISCORD = "123456789";
 
 beforeEach(() => {
-  db.run("DELETE FROM tracked_players");
+  csDb.run("DELETE FROM tracked_players");
   db.run("DELETE FROM linked_accounts");
-  db.run("DELETE FROM processed_matches");
+  csDb.run("DELETE FROM processed_matches");
   db.run("DELETE FROM guild_config");
-  db.run("DELETE FROM leaderboard_snapshots");
-  db.run("DELETE FROM snapshots");
-  db.run("DELETE FROM leetify_unknown");
+  csDb.run("DELETE FROM leaderboard_snapshots");
+  csDb.run("DELETE FROM snapshots");
+  csDb.run("DELETE FROM leetify_unknown");
 });
 
 describe("tracked players", () => {
@@ -162,15 +163,15 @@ describe("leaderboard snapshots", () => {
 
   test("getLeaderboardBefore returns the snapshot prior to cutoff + its timestamp", () => {
     // Three historical snapshots via raw SQL so we control recorded_at.
-    db.run(
+    csDb.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
       [GUILD, STEAM, 14000, "2026-04-15 10:00:00"],
     );
-    db.run(
+    csDb.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
       [GUILD, STEAM, 14500, "2026-04-16 10:00:00"],
     );
-    db.run(
+    csDb.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
       [GUILD, STEAM, 15000, "2026-04-17 10:00:00"],
     );
@@ -181,7 +182,7 @@ describe("leaderboard snapshots", () => {
   });
 
   test("getLeaderboardBefore returns null recordedAt when no earlier snapshot exists", () => {
-    db.run(
+    csDb.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
       [GUILD, STEAM, 14000, "2026-04-17 10:00:00"],
     );
@@ -212,12 +213,12 @@ describe("leetify-unknown marker", () => {
     markLeetifyUnknown(STEAM);
     markLeetifyUnknown(STEAM);
     expect(isLeetifyUnknown(STEAM)).toBe(true);
-    const rows = db.query("SELECT * FROM leetify_unknown").all();
+    const rows = csDb.query("SELECT * FROM leetify_unknown").all();
     expect(rows).toHaveLength(1);
   });
 
   test("stale marks (>24h) are treated as unknown=false", () => {
-    db.run(
+    csDb.run(
       "INSERT INTO leetify_unknown (steam_id, first_seen, last_checked) VALUES (?, datetime('now', '-30 days'), datetime('now', '-30 hours'))",
       [STEAM],
     );

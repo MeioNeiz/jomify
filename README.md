@@ -27,7 +27,7 @@ from GitHub, backed up nightly.
 - `/track add/remove/list/all` — add players to tracking
 - `/link steamid [user]` — link Discord → Steam
 - `/import steamids` — bulk import Steam IDs
-- `/setchannel channel` — where to post match alerts
+- `/jomify setchannel channel` — where to post match alerts
 
 ## Architecture
 

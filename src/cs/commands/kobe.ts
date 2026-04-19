@@ -1,13 +1,13 @@
 import { SlashCommandBuilder } from "discord.js";
-import { refreshPlayers } from "../cs/refresh.js";
+import { respondWithRevalidate, wrapCommand } from "../../commands/handler.js";
+import { freshnessSuffix, requireTrackedGuild } from "../../helpers.js";
+import { embed, pad, table } from "../../ui.js";
+import { refreshPlayers } from "../refresh.js";
 import {
   getMostRecentMatchTime,
   getPlayerMatchStats,
   getPlayerStatAverages,
-} from "../cs/store.js";
-import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
-import { embed, pad, table } from "../ui.js";
-import { respondWithRevalidate, wrapCommand } from "./handler.js";
+} from "../store.js";
 
 export const data = new SlashCommandBuilder()
   .setName("kobe")

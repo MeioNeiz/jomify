@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { sqlite as csDb } from "../src/cs/db.js";
 import type { LeetifyMatchDetails } from "../src/cs/leetify/types.js";
 import {
   getApiUsageToday,
@@ -33,17 +34,17 @@ const STEAM1 = "76561198000000001";
 const STEAM2 = "76561198000000002";
 
 beforeEach(() => {
-  db.run("DELETE FROM tracked_players");
+  csDb.run("DELETE FROM tracked_players");
   db.run("DELETE FROM linked_accounts");
-  db.run("DELETE FROM processed_matches");
+  csDb.run("DELETE FROM processed_matches");
   db.run("DELETE FROM guild_config");
-  db.run("DELETE FROM leaderboard_snapshots");
-  db.run("DELETE FROM snapshots");
-  db.run("DELETE FROM player_streaks");
-  db.run("DELETE FROM match_stats");
-  db.run("DELETE FROM matches");
-  db.run("DELETE FROM analysed_opponents");
-  db.run("DELETE FROM api_usage");
+  csDb.run("DELETE FROM leaderboard_snapshots");
+  csDb.run("DELETE FROM snapshots");
+  csDb.run("DELETE FROM player_streaks");
+  csDb.run("DELETE FROM match_stats");
+  csDb.run("DELETE FROM matches");
+  csDb.run("DELETE FROM analysed_opponents");
+  csDb.run("DELETE FROM api_usage");
 });
 
 // ── Streaks ──
@@ -122,7 +123,7 @@ describe("weekly leaderboard", () => {
 
   test("getWeekAgoLeaderboard finds nearest", () => {
     // Insert a snapshot backdated ~7 days
-    db.run(
+    csDb.run(
       `INSERT INTO leaderboard_snapshots
            (guild_id, steam_id, premier,
             recorded_at)
@@ -546,23 +547,23 @@ describe("getPlayerHistory", () => {
   test("premierDelta is the LAG difference over finished_at", () => {
     seedMatches();
     // Assign distinct timestamps so LAG can order them predictably.
-    db.run("UPDATE matches SET finished_at = '2026-04-01' WHERE match_id = 'm1'");
-    db.run("UPDATE matches SET finished_at = '2026-04-02' WHERE match_id = 'm2'");
-    db.run("UPDATE matches SET finished_at = '2026-04-03' WHERE match_id = 'm3'");
-    db.run("UPDATE matches SET finished_at = '2026-04-04' WHERE match_id = 'm4'");
-    db.run(
+    csDb.run("UPDATE matches SET finished_at = '2026-04-01' WHERE match_id = 'm1'");
+    csDb.run("UPDATE matches SET finished_at = '2026-04-02' WHERE match_id = 'm2'");
+    csDb.run("UPDATE matches SET finished_at = '2026-04-03' WHERE match_id = 'm3'");
+    csDb.run("UPDATE matches SET finished_at = '2026-04-04' WHERE match_id = 'm4'");
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14000 WHERE match_id='m1' AND steam_id=?",
       [STEAM1],
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14080 WHERE match_id='m2' AND steam_id=?",
       [STEAM1],
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14040 WHERE match_id='m3' AND steam_id=?",
       [STEAM1],
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14150 WHERE match_id='m4' AND steam_id=?",
       [STEAM1],
     );
@@ -732,11 +733,11 @@ describe("carry attribution", () => {
       ]),
     );
     // Simulate JOM's premier swinging -60 then +60.
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14940 WHERE steam_id=? AND match_id=?",
       [JOM, "m1"],
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 15000 WHERE steam_id=? AND match_id=?",
       [JOM, "m2"],
     );
@@ -767,11 +768,11 @@ describe("carry attribution", () => {
         { steamId: E2, team: 3, lr: 0 },
       ]),
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 14940 WHERE steam_id=? AND match_id=?",
       [JOM, "m1"],
     );
-    db.run(
+    csDb.run(
       "UPDATE match_stats SET premier_after = 15000 WHERE steam_id=? AND match_id=?",
       [JOM, "m2"],
     );
@@ -882,7 +883,7 @@ describe("getBestMatch", () => {
     // window queries "now − N days", so rewrite finished_at to today
     // after seeding so the rows fall inside any test window.
     seedMatches();
-    db.run("UPDATE matches SET finished_at = datetime('now')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now')");
   }
 
   test("returns null when no matches in window", () => {
@@ -914,7 +915,7 @@ describe("getBestMatch", () => {
 
   test("respects the days window", () => {
     seedMatches(); // all at 2026-01-01
-    db.run("UPDATE matches SET finished_at = datetime('now', '-200 days')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now', '-200 days')");
     expect(getBestMatch([STEAM1], "kills", 30)).toBeNull();
     expect(getBestMatch([STEAM1], "kills", 365)?.matchId).toBe("m3");
   });
@@ -931,9 +932,10 @@ describe("getBestMatch", () => {
   test("multikill stat orders lexicographically by tier", () => {
     seedRecent();
     // Boost m2's multikills so it's the single best despite kills=15
-    db.run("UPDATE match_stats SET multi5k = 1 WHERE match_id = 'm2' AND steam_id = ?", [
-      STEAM1,
-    ]);
+    csDb.run(
+      "UPDATE match_stats SET multi5k = 1 WHERE match_id = 'm2' AND steam_id = ?",
+      [STEAM1],
+    );
     const best = getBestMatch([STEAM1], "multikill", 30);
     expect(best?.matchId).toBe("m2");
     expect(best?.multi5k).toBe(1);
@@ -970,7 +972,7 @@ describe("getEncounters", () => {
       ]),
     );
     // seeded finished_at is 2026-01-01; push into the window.
-    db.run("UPDATE matches SET finished_at = datetime('now')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now')");
 
     const rows = getEncounters(TARGET, 7);
     expect(rows).toHaveLength(2);
@@ -990,7 +992,7 @@ describe("getEncounters", () => {
         { steamId: MATE, team: 2, kills: 18, deaths: 12 },
       ]),
     );
-    db.run("UPDATE matches SET finished_at = datetime('now', '-30 days')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now', '-30 days')");
     expect(getEncounters(TARGET, 7)).toHaveLength(0);
     expect(getEncounters(TARGET, 60)).toHaveLength(1);
   });
@@ -1008,7 +1010,7 @@ describe("getEncounters", () => {
         { steamId: MATE, team: 3, kills: 18, deaths: 12 },
       ]),
     );
-    db.run("UPDATE matches SET finished_at = datetime('now')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now')");
 
     const rows = getEncounters(TARGET, 7).filter((r) => r.otherSteamId === MATE);
     expect(rows).toHaveLength(2);
@@ -1038,7 +1040,7 @@ describe("getEncounters", () => {
       s.reaction_time = 0.15;
       saveMatchDetails(m);
     }
-    db.run("UPDATE matches SET finished_at = datetime('now')");
+    csDb.run("UPDATE matches SET finished_at = datetime('now')");
 
     // Target's only encounter is with FOE — confirm the store helper
     // surfaces that encounter, which /suspects then runs analyseStats on.

@@ -23,7 +23,7 @@ import {
 } from "../src/cs/store.js";
 
 const MIN_GAP_MS = 200;
-const DB = join(import.meta.dir, "..", "jomify.db");
+const DB = join(import.meta.dir, "..", "jomify-cs.db");
 const rawDb = new Database(DB, { readonly: true });
 
 function playerCount(matchId: string): number {

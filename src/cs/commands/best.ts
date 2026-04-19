@@ -6,8 +6,17 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
 } from "discord.js";
-import { registerComponent } from "../components.js";
-import { refreshPlayers } from "../cs/refresh.js";
+import { respondWithRevalidate, wrapCommand } from "../../commands/handler.js";
+import { registerComponent } from "../../components.js";
+import {
+  freshnessSuffix,
+  kdRatio,
+  outcomeTag,
+  relTime,
+  requireTrackedGuild,
+} from "../../helpers.js";
+import { embed } from "../../ui.js";
+import { refreshPlayers } from "../refresh.js";
 import {
   BEST_STATS,
   type BestMatch,
@@ -15,16 +24,7 @@ import {
   getBestMatch,
   getMostRecentMatchTime,
   getTrackedPlayers,
-} from "../cs/store.js";
-import {
-  freshnessSuffix,
-  kdRatio,
-  outcomeTag,
-  relTime,
-  requireTrackedGuild,
-} from "../helpers.js";
-import { embed } from "../ui.js";
-import { respondWithRevalidate, wrapCommand } from "./handler.js";
+} from "../store.js";
 
 const STAT_CHOICES: { name: string; value: BestStatKey }[] = [
   { name: "Leetify rating", value: "rating" },

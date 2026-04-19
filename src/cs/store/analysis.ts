@@ -1,8 +1,8 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
-import db from "../../db.js";
 import { bumpApiCall } from "../../metrics.js";
-import { analysedOpponents, apiUsage, matches, matchStats } from "../../schema.js";
+import db from "../db.js";
+import { analysedOpponents, apiUsage, matches, matchStats } from "../schema.js";
 
 export interface HeadToHeadResult {
   sharedMatches: number;

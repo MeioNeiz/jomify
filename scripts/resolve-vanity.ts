@@ -15,8 +15,9 @@ import { join } from "node:path";
 import { resolveSteamId } from "../src/cs/steam/client.js";
 
 const DRY = process.argv.includes("--dry");
-const DB = join(import.meta.dir, "..", "jomify.db");
-const db = new Database(DB);
+// linked_accounts lives in the core DB; tracked_players in the CS DB.
+const db = new Database(join(import.meta.dir, "..", "jomify.db"));
+const csDb = new Database(join(import.meta.dir, "..", "jomify-cs.db"));
 
 const STEAM64_RE = /^7656119\d{10}$/;
 
@@ -62,7 +63,7 @@ async function sweepLinkedAccounts() {
 }
 
 async function sweepTrackedPlayers() {
-  const rows = db
+  const rows = csDb
     .query<{ guild_id: string; steam_id: string }, []>(
       "SELECT guild_id, steam_id FROM tracked_players ORDER BY guild_id, steam_id",
     )
@@ -78,19 +79,19 @@ async function sweepTrackedPlayers() {
     }
     console.log(`  ✓ ${row.steam_id} -> ${resolved} (${row.guild_id})`);
     if (DRY) continue;
-    const clash = db
+    const clash = csDb
       .query<{ c: number }, [string, string]>(
         "SELECT COUNT(*) AS c FROM tracked_players WHERE guild_id = ? AND steam_id = ?",
       )
       .get(row.guild_id, resolved);
     if (clash && clash.c > 0) {
-      db.run("DELETE FROM tracked_players WHERE guild_id = ? AND steam_id = ?", [
+      csDb.run("DELETE FROM tracked_players WHERE guild_id = ? AND steam_id = ?", [
         row.guild_id,
         row.steam_id,
       ]);
       console.log(`    (dropped duplicate; ${resolved} was already tracked)`);
     } else {
-      db.run(
+      csDb.run(
         "UPDATE tracked_players SET steam_id = ? WHERE guild_id = ? AND steam_id = ?",
         [resolved, row.guild_id, row.steam_id],
       );

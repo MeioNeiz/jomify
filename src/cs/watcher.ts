@@ -21,6 +21,7 @@ import type { LeetifyMatchDetails, LeetifyProfile } from "./leetify/types.js";
 import {
   getAllTrackedSteamIds,
   getDiscordId,
+  getMatchStatForPlayer,
   getPlayerStatAverages,
   getStoredMatchCount,
   hasMatchStats,
@@ -32,8 +33,7 @@ import {
   updatePlayerStreak,
 } from "./store.js";
 
-const BAD_GAME_RATING = -0.05;
-const GREAT_GAME_RATING = 0.08;
+const GREAT_GAME_RATING = 0.15;
 
 const lastKnownPremier = new Map<string, number>();
 
@@ -153,7 +153,10 @@ async function checkPlayer(client: Client, steamId: string) {
             : currentPremier;
         if (rank != null) recordPremierAfter(match.id, steamId, rank);
       } catch (err) {
-        logError("watcher:match-details", err, { matchId: match.id }, "warn");
+        log.debug(
+          { matchId: match.id, err },
+          "watcher:match-details fetch failed, will retry",
+        );
       }
     }
 
@@ -162,55 +165,41 @@ async function checkPlayer(client: Client, steamId: string) {
 
     const avgs = getPlayerStatAverages(steamId);
 
-    if (match.leetify_rating <= BAD_GAME_RATING) {
-      let desc =
-        `${player} had a shocker on ` +
-        `**${match.map_name}**\n\n` +
-        `Rating: **` +
-        `${match.leetify_rating.toFixed(2)}` +
-        `**\n` +
-        `Score: ${match.score[0]}` +
-        `-${match.score[1]} ` +
-        `(${match.outcome})`;
-
-      if (avgs && avgs.avg_rating != null) {
-        const diff = match.leetify_rating - avgs.avg_rating;
-        desc +=
-          `\nAvg rating: ` +
-          `${avgs.avg_rating.toFixed(2)} ` +
-          `(${diff.toFixed(2)} from avg)`;
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle("Rough Game")
-        .setColor(0xff0000)
-        .setDescription(desc);
-      await sendToGuilds(client, steamId, embed);
-    }
+    // Full per-player stats: from details if just fetched, else from DB
+    const pStats =
+      details?.stats.find((s) => s.steam64_id === steamId) ??
+      getMatchStatForPlayer(match.id, steamId);
 
     if (match.leetify_rating >= GREAT_GAME_RATING) {
-      let desc =
-        `${player} went off on ` +
-        `**${match.map_name}**\n\n` +
-        `Rating: **` +
-        `${match.leetify_rating.toFixed(2)}` +
-        `**\n` +
-        `Score: ${match.score[0]}` +
-        `-${match.score[1]} ` +
-        `(${match.outcome})`;
-
-      if (avgs && avgs.avg_rating != null) {
-        const diff = match.leetify_rating - avgs.avg_rating;
-        desc +=
-          `\nAvg rating: ` +
-          `${avgs.avg_rating.toFixed(2)} ` +
-          `(+${diff.toFixed(2)} above avg)`;
-      }
-
+      const ratingVal = match.leetify_rating.toFixed(2);
+      const ratingLabel =
+        avgs?.avg_rating != null
+          ? `${ratingVal} (+${(match.leetify_rating - avgs.avg_rating).toFixed(2)} vs avg)`
+          : ratingVal;
       const embed = new EmbedBuilder()
         .setTitle("Great Game!")
         .setColor(0x00ff00)
-        .setDescription(desc);
+        .setDescription(
+          `${player} on **${match.map_name}** — ` +
+            `${match.score[0]}-${match.score[1]} (${match.outcome})`,
+        );
+      if (pStats) {
+        const hs =
+          pStats.total_kills > 0
+            ? Math.round((pStats.total_hs_kills / pStats.total_kills) * 100)
+            : 0;
+        embed.addFields(
+          {
+            name: "KDA",
+            value: `${pStats.total_kills}/${pStats.total_deaths}/${pStats.total_assists}`,
+            inline: true,
+          },
+          { name: "K/D", value: pStats.kd_ratio.toFixed(2), inline: true },
+          { name: "ADR", value: Math.round(pStats.dpr).toString(), inline: true },
+          { name: "HS%", value: `${hs}%`, inline: true },
+          { name: "Rating", value: ratingLabel, inline: true },
+        );
+      }
       await sendToGuilds(client, steamId, embed);
     }
 
@@ -218,11 +207,30 @@ async function checkPlayer(client: Client, steamId: string) {
     if (details) {
       const achievements = checkBigMatch(details, steamId);
       if (achievements.length > 0) {
-        const desc = `${player} on **${match.map_name}**\n\n${achievements.join("\n")}`;
         const embed = new EmbedBuilder()
           .setTitle("Monster Game!")
           .setColor(0x00ff00)
-          .setDescription(desc);
+          .setDescription(
+            `${player} on **${match.map_name}** — ` +
+              `${match.score[0]}-${match.score[1]} (${match.outcome})\n\n` +
+              achievements.join("\n"),
+          );
+        if (pStats) {
+          const hs =
+            pStats.total_kills > 0
+              ? Math.round((pStats.total_hs_kills / pStats.total_kills) * 100)
+              : 0;
+          embed.addFields(
+            {
+              name: "KDA",
+              value: `${pStats.total_kills}/${pStats.total_deaths}/${pStats.total_assists}`,
+              inline: true,
+            },
+            { name: "K/D", value: pStats.kd_ratio.toFixed(2), inline: true },
+            { name: "ADR", value: Math.round(pStats.dpr).toString(), inline: true },
+            { name: "HS%", value: `${hs}%`, inline: true },
+          );
+        }
         await sendToGuilds(client, steamId, embed);
       }
     }

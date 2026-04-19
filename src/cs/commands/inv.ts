@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fetchInventorySummary, type InventoryItem } from "../cs/inventory.js";
-import { embed } from "../ui.js";
-import { requireLinkedUser, wrapCommand } from "./handler.js";
+import { requireLinkedUser, wrapCommand } from "../../commands/handler.js";
+import { embed } from "../../ui.js";
+import { fetchInventorySummary, type InventoryItem } from "../inventory.js";
 
 export const data = new SlashCommandBuilder()
   .setName("inv")

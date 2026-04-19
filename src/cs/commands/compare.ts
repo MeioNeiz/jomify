@@ -1,6 +1,9 @@
 import { type EmbedBuilder, SlashCommandBuilder } from "discord.js";
-import { getProfile } from "../cs/leetify/client.js";
-import type { LeetifyProfile } from "../cs/leetify/types.js";
+import { respondWithRevalidate } from "../../commands/handler.js";
+import { fmt, freshnessSuffix } from "../../helpers.js";
+import { embed } from "../../ui.js";
+import { getProfile } from "../leetify/client.js";
+import type { LeetifyProfile } from "../leetify/types.js";
 import {
   getHeadToHead,
   getLatestSnapshot,
@@ -8,10 +11,7 @@ import {
   getPlayerStatAverages,
   getSteamId,
   type PlayerAverages,
-} from "../cs/store.js";
-import { fmt, freshnessSuffix } from "../helpers.js";
-import { embed } from "../ui.js";
-import { respondWithRevalidate } from "./handler.js";
+} from "../store.js";
 
 export const data = new SlashCommandBuilder()
   .setName("compare")
@@ -244,7 +244,7 @@ function formDetail(
 
 // ── Execute ──
 
-import { wrapCommand } from "./handler.js";
+import { wrapCommand } from "../../commands/handler.js";
 
 type OverviewView = {
   n1: string;

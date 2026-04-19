@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { sqlite as csDb } from "../src/cs/db.js";
 import { trackApiCall } from "../src/cs/store.js";
 import { sqlite as db } from "../src/db.js";
 import {
@@ -11,7 +12,7 @@ import { getCommandStats, saveMetric } from "../src/store.js";
 
 beforeEach(() => {
   db.run("DELETE FROM metrics");
-  db.run("DELETE FROM api_usage");
+  csDb.run("DELETE FROM api_usage");
 });
 
 describe("runWithMetrics", () => {
@@ -102,7 +103,7 @@ describe("bumpApiCall", () => {
 
   test("trackApiCall outside runWithMetrics still updates api_usage", () => {
     trackApiCall("leetify:/v3/profile");
-    const usage = db.query("SELECT * FROM api_usage").all();
+    const usage = csDb.query("SELECT * FROM api_usage").all();
     expect(usage).toHaveLength(1);
   });
 });

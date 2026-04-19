@@ -1,13 +1,9 @@
 import { SlashCommandBuilder } from "discord.js";
-import { refreshPlayers } from "../cs/refresh.js";
-import {
-  getMostRecentMatchTime,
-  getTeamCarryStats,
-  getTeamMapStats,
-} from "../cs/store.js";
-import { freshnessSuffix, requireTrackedGuild, signed } from "../helpers.js";
-import { embed, rankPrefix } from "../ui.js";
-import { respondWithRevalidate, wrapCommand } from "./handler.js";
+import { respondWithRevalidate, wrapCommand } from "../../commands/handler.js";
+import { freshnessSuffix, requireTrackedGuild, signed } from "../../helpers.js";
+import { embed, rankPrefix } from "../../ui.js";
+import { refreshPlayers } from "../refresh.js";
+import { getMostRecentMatchTime, getTeamCarryStats, getTeamMapStats } from "../store.js";
 import { formatMapLines, MIN_MATCHES } from "./maps.js";
 
 const DEFAULT_DAYS = 30;

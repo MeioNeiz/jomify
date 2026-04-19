@@ -4,13 +4,13 @@ import {
   ButtonStyle,
   SlashCommandBuilder,
 } from "discord.js";
-import { registerComponent } from "../components.js";
-import { getProfile, LeetifyNotFoundError } from "../cs/leetify/client.js";
-import { resolveSteamId } from "../cs/steam/client.js";
-import { addTrackedPlayer, linkAccount } from "../cs/store.js";
-import log from "../logger.js";
-import { embed } from "../ui.js";
-import { wrapCommand } from "./handler.js";
+import { wrapCommand } from "../../commands/handler.js";
+import { registerComponent } from "../../components.js";
+import log from "../../logger.js";
+import { embed } from "../../ui.js";
+import { getProfile, LeetifyNotFoundError } from "../leetify/client.js";
+import { resolveSteamId } from "../steam/client.js";
+import { addTrackedPlayer, linkAccount } from "../store.js";
 
 export const data = new SlashCommandBuilder()
   .setName("link")

@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import db from "../../db.js";
-import { leaderboardSnapshots, snapshots } from "../../schema.js";
+import db from "../db.js";
+import { leaderboardSnapshots, snapshots } from "../schema.js";
 
 export interface PlayerSnapshot {
   steamId: string;

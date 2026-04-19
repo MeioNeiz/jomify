@@ -1,0 +1,165 @@
+import { sql } from "drizzle-orm";
+import {
+  foreignKey,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+} from "drizzle-orm/sqlite-core";
+
+const now = sql`(datetime('now'))`;
+const today = sql`(date('now'))`;
+
+export const trackedPlayers = sqliteTable(
+  "tracked_players",
+  {
+    guildId: text("guild_id").notNull(),
+    steamId: text("steam_id").notNull(),
+    addedAt: text("added_at").notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.guildId, t.steamId] }),
+    index("idx_tracked_players_steam").on(t.steamId),
+  ],
+);
+
+export const snapshots = sqliteTable(
+  "snapshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    steamId: text("steam_id").notNull(),
+    name: text("name").notNull(),
+    premier: integer("premier"),
+    leetify: real("leetify"),
+    aim: real("aim"),
+    positioning: real("positioning"),
+    utility: real("utility"),
+    clutch: real("clutch"),
+    recordedAt: text("recorded_at").notNull().default(now),
+  },
+  (t) => [index("idx_snapshots_steam").on(t.steamId, t.recordedAt)],
+);
+
+export const processedMatches = sqliteTable(
+  "processed_matches",
+  {
+    matchId: text("match_id").notNull(),
+    steamId: text("steam_id").notNull(),
+    finishedAt: text("finished_at"),
+    processedAt: text("processed_at").notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.matchId, t.steamId] })],
+);
+
+export const leaderboardSnapshots = sqliteTable(
+  "leaderboard_snapshots",
+  {
+    guildId: text("guild_id").notNull(),
+    steamId: text("steam_id").notNull(),
+    premier: integer("premier"),
+    recordedAt: text("recorded_at").notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.guildId, t.steamId, t.recordedAt] }),
+    index("idx_leaderboard_guild").on(t.guildId, t.recordedAt),
+  ],
+);
+
+export const matches = sqliteTable(
+  "matches",
+  {
+    matchId: text("match_id").primaryKey(),
+    finishedAt: text("finished_at").notNull(),
+    dataSource: text("data_source"),
+    dataSourceMatchId: text("data_source_match_id"),
+    mapName: text("map_name").notNull(),
+    team1Score: integer("team1_score"),
+    team2Score: integer("team2_score"),
+    hasBannedPlayer: integer("has_banned_player", { mode: "boolean" }).default(false),
+    replayUrl: text("replay_url"),
+  },
+  (t) => [index("idx_matches_finished").on(t.finishedAt)],
+);
+
+export const matchStats = sqliteTable(
+  "match_stats",
+  {
+    matchId: text("match_id").notNull(),
+    steamId: text("steam_id").notNull(),
+    name: text("name"),
+    teamNumber: integer("team_number"),
+    totalKills: integer("total_kills"),
+    totalDeaths: integer("total_deaths"),
+    totalAssists: integer("total_assists"),
+    kdRatio: real("kd_ratio"),
+    dpr: real("dpr"),
+    totalDamage: integer("total_damage"),
+    leetifyRating: real("leetify_rating"),
+    ctLeetifyRating: real("ct_leetify_rating"),
+    tLeetifyRating: real("t_leetify_rating"),
+    accuracyHead: real("accuracy_head"),
+    sprayAccuracy: real("spray_accuracy"),
+    flashbangHitFriend: integer("flashbang_hit_friend"),
+    flashbangHitFoe: integer("flashbang_hit_foe"),
+    flashbangThrown: integer("flashbang_thrown"),
+    multi3k: integer("multi3k"),
+    multi4k: integer("multi4k"),
+    multi5k: integer("multi5k"),
+    roundsCount: integer("rounds_count"),
+    roundsWon: integer("rounds_won"),
+    roundsLost: integer("rounds_lost"),
+    premierAfter: integer("premier_after"),
+    flashScore: real("flash_score"),
+    raw: text("raw").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.matchId, t.steamId] }),
+    foreignKey({ columns: [t.matchId], foreignColumns: [matches.matchId] }),
+    index("idx_match_stats_steam").on(t.steamId),
+  ],
+);
+
+export const apiUsage = sqliteTable(
+  "api_usage",
+  {
+    endpoint: text("endpoint").notNull(),
+    day: text("day").notNull().default(today),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.endpoint, t.day] })],
+);
+
+export const analysedOpponents = sqliteTable(
+  "analysed_opponents",
+  {
+    matchId: text("match_id").notNull(),
+    steamId: text("steam_id").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.matchId, t.steamId] })],
+);
+
+export const playerStreaks = sqliteTable("player_streaks", {
+  steamId: text("steam_id").primaryKey(),
+  streakType: text("streak_type").notNull().default("win"),
+  streakCount: integer("streak_count").notNull().default(0),
+  lastAlertedCount: integer("last_alerted_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(now),
+});
+
+export const guildWinStreakRecords = sqliteTable("guild_win_streak_records", {
+  guildId: text("guild_id").primaryKey(),
+  recordCount: integer("record_count").notNull().default(0),
+  holderSteamId: text("holder_steam_id"),
+  setAt: text("set_at").notNull().default(now),
+});
+
+// Steam accounts the user is tracking that don't have a Leetify profile.
+// We cache these so the watcher stops polling (and logging) them every
+// cycle. Re-checked after RECHECK_HOURS in case they sign up later.
+export const leetifyUnknown = sqliteTable("leetify_unknown", {
+  steamId: text("steam_id").primaryKey(),
+  firstSeen: text("first_seen").notNull().default(now),
+  lastChecked: text("last_checked").notNull().default(now),
+});
