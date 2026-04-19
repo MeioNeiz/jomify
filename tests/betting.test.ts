@@ -27,6 +27,7 @@ import {
   getWagersForBet,
   listOpenBets,
   placeWager,
+  reopenBet,
   resolveBet,
 } from "../src/betting/store.js";
 import type { EventMap } from "../src/events.js";
@@ -241,6 +242,34 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
     const afterOne = getBalance(DISCORD_A);
     cancelBet(id);
     expect(getBalance(DISCORD_A)).toBe(afterOne);
+  });
+
+  test("reopenBet reverses payouts + resets status; clamps when balance spent", () => {
+    adjustBalance(DISCORD_A, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, 95, "seed"); // 100
+    const id = createBet(GUILD, CREATOR_DISCORD, "Flip me?");
+    placeWager(id, DISCORD_A, "yes", 10); // winner (staked 10 → balance 90)
+    placeWager(id, DISCORD_B, "no", 30); // loser (staked 30 → balance 70)
+    resolveBet(id, "yes");
+    // A won 10 + 30 = 40 → balance 90 + 40 = 130. B stays at 70.
+    expect(getBalance(DISCORD_A)).toBe(130);
+    expect(getBalance(DISCORD_B)).toBe(70);
+
+    // A spends 125 before dispute reversal lands — should clamp at 0
+    // rather than throw.
+    adjustBalance(DISCORD_A, -125, "spent"); // 130 - 125 = 5
+    expect(getBalance(DISCORD_A)).toBe(5);
+
+    reopenBet(id);
+    // A had 5; reversal wants -40 but clamps to -5.
+    expect(getBalance(DISCORD_A)).toBe(0);
+    expect(getBalance(DISCORD_B)).toBe(70); // no payout/refund to reverse for B
+    expect(getBet(id)?.status).toBe("open");
+    expect(getBet(id)?.winningOutcome).toBeNull();
+
+    // Ledger invariant preserved.
+    const aRows = getRecentLedger(DISCORD_A, 10);
+    expect(aRows.find((r) => r.reason === "bet-reverse")?.delta).toBe(-5);
   });
 
   test("getExpiredOpenBets returns open bets past their expires_at only", () => {

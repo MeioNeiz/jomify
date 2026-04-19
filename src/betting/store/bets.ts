@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import db from "../db.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
 
@@ -194,6 +194,63 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
         winningOutcome,
         resolvedAt: sql`(datetime('now'))`,
       })
+      .where(eq(bets.id, betId))
+      .run();
+  });
+}
+
+/**
+ * Reverse every payout / refund / cancel ledger row for this bet and
+ * flip its status back to open. Used by the dispute admin flow so we
+ * can re-apply a corrected resolution from a clean slate.
+ *
+ * Balance floor: if a user spent their (now-reversed) winnings, we
+ * claw back only as much as their current balance allows — the
+ * shortfall stays forgiven. Each reversal writes a `bet-reverse`
+ * ledger row with the clamped delta, preserving the sum-of-ledger =
+ * balance invariant.
+ */
+export function reopenBet(betId: number): void {
+  db.transaction((tx) => {
+    const bet = tx.select().from(bets).where(eq(bets.id, betId)).get();
+    if (!bet) throw new Error(`Bet ${betId} does not exist`);
+    if (bet.status === "open") return;
+
+    const rows = tx
+      .select()
+      .from(ledger)
+      .where(
+        and(
+          eq(ledger.ref, String(betId)),
+          inArray(ledger.reason, ["bet-payout", "bet-refund", "bet-cancel"]),
+        ),
+      )
+      .all();
+    for (const r of rows) {
+      const acct = tx
+        .select({ balance: accounts.balance })
+        .from(accounts)
+        .where(eq(accounts.discordId, r.discordId))
+        .get();
+      const current = acct?.balance ?? 0;
+      // Want to apply -r.delta. Floor at 0: clamp to -current.
+      const reversed = Math.max(-r.delta, -current);
+      if (reversed === 0) continue;
+      tx.update(accounts)
+        .set({ balance: current + reversed })
+        .where(eq(accounts.discordId, r.discordId))
+        .run();
+      tx.insert(ledger)
+        .values({
+          discordId: r.discordId,
+          delta: reversed,
+          reason: "bet-reverse",
+          ref: String(betId),
+        })
+        .run();
+    }
+    tx.update(bets)
+      .set({ status: "open", winningOutcome: null, resolvedAt: null })
       .where(eq(bets.id, betId))
       .run();
   });

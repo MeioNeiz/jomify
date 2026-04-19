@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder,
   ButtonBuilder,
+  ButtonStyle,
   type ChatInputCommandInteraction,
   type InteractionReplyOptions,
   type MessageEditOptions,
@@ -15,11 +16,17 @@ import { wrapCommand } from "../../commands/handler.js";
 import { registerComponent } from "../../components.js";
 import log from "../../logger.js";
 import { embed } from "../../ui.js";
+// Side-effect import: registers the dispute component handlers. Kept
+// here (not commands/index.ts) so the market module owns the
+// surfaces that share its lifecycle.
+import "../disputes.js";
+import { DISPUTE_COST } from "../config.js";
 import {
   cancelBet,
   createBet,
   getBalance,
   getBet,
+  getOpenDisputeForBet,
   getWagersForBet,
   listOpenBets,
   type Outcome,
@@ -127,6 +134,14 @@ export function renderMarketView(
     const unix = Math.floor(new Date(`${bet.expiresAt}Z`).getTime() / 1000);
     desc.push(`Closes <t:${unix}:R>`);
   }
+  // Flag pending disputes inline so bystanders see the status without
+  // having to scroll. One open dispute per market; the Report button
+  // below is hidden while it's pending.
+  const openDispute = bet.status === "resolved" ? getOpenDisputeForBet(bet.id) : null;
+  if (openDispute) {
+    desc.push(`\u26A0\uFE0F Dispute #${openDispute.id} pending admin ruling.`);
+  }
+
   desc.push("");
   desc.push(`__${MARKET_COPY.betsLabel}__`);
   desc.push(bets.length ? bets.join("\n") : MARKET_COPY.emptyBets);
@@ -136,6 +151,19 @@ export function renderMarketView(
     .setTitle(MARKET_COPY.title(bet.id, bet.question))
     .setDescription(desc.join("\n"));
 
+  if (bet.status === "resolved" && !openDispute) {
+    // Offer a Report button only while the ruling stands unchallenged.
+    // Admin resolution (via the dispute flow) may produce another
+    // resolved state — that one's eligible to be reported in turn.
+    const reportRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`dispute:report:${bet.id}`)
+        .setLabel(`Report (${DISPUTE_COST} shekels)`)
+        .setEmoji("\u26A0\uFE0F")
+        .setStyle(ButtonStyle.Secondary),
+    );
+    return { embeds: [e], components: [reportRow] };
+  }
   if (bet.status !== "open") {
     return { embeds: [e], components: [] };
   }
