@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+} from "drizzle-orm/sqlite-core";
 
 const now = sql`(datetime('now'))`;
 
@@ -37,10 +44,25 @@ export const bets = sqliteTable(
     expiresAt: text("expires_at"),
     channelId: text("channel_id"),
     messageId: text("message_id"),
+    // Auto-resolver wiring. Null on manual markets (today's default).
+    // `resolverKind` is the registry key; `resolverArgs` is the static
+    // JSON config captured at creation; `resolverState` is a mutable
+    // scratchpad the resolver uses to stay idempotent across polls.
+    resolverKind: text("resolver_kind"),
+    resolverArgs: text("resolver_args"),
+    resolverState: text("resolver_state"),
+    // LMSR market-maker state. b=0 means legacy pari-mutuel market.
+    // initialProb is the creator's starting estimate; qYes/qNo are the
+    // running share counts updated on every wager.
+    initialProb: real("initial_prob").notNull().default(0.5),
+    b: integer("b").notNull().default(0),
+    qYes: real("q_yes").notNull().default(0),
+    qNo: real("q_no").notNull().default(0),
   },
   (t) => [
     index("idx_bets_guild_status").on(t.guildId, t.status),
     index("idx_bets_expires").on(t.expiresAt),
+    index("idx_bets_resolver").on(t.resolverKind),
   ],
 );
 
@@ -56,6 +78,9 @@ export const wagers = sqliteTable(
     discordId: text("discord_id").notNull(),
     outcome: text("outcome").notNull(), // 'yes' | 'no'
     amount: integer("amount").notNull(),
+    // LMSR shares received at bet time. Each share pays 1 shekel (minus rake)
+    // if this outcome resolves. 0 on legacy pari-mutuel wagers.
+    shares: real("shares").notNull().default(0),
     placedAt: text("placed_at").notNull().default(now),
   },
   (t) => [
