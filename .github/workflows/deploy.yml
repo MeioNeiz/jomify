@@ -20,4 +20,9 @@ jobs:
             cd ~/jomify
             git pull --ff-only
             ~/.bun/bin/bun install --frozen-lockfile
+            # Sync slash commands to Discord before restart so the new
+            # bot never serves a command the registry doesn't know
+            # about. PUT is idempotent and cheap, so it's fine to run
+            # every deploy even when command data hasn't changed.
+            ~/.bun/bin/bun run register
             sudo systemctl restart jomify
