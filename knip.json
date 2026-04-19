@@ -10,7 +10,7 @@
     "tests/**/*.test.ts",
     "tests/preload.ts"
   ],
-  "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
+  "project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "admin/**/*.{ts,tsx}"],
   "ignoreDependencies": ["pino-pretty", "drizzle-kit"],
   "rules": {
     "types": "off",

@@ -158,6 +158,25 @@ export const disputeVotes = sqliteTable(
   (t) => [primaryKey({ columns: [t.disputeId, t.discordId] })],
 );
 
+// Admin action audit log. One row per write from the admin site.
+// Lives in the betting DB since most writes target it.
+export const adminActions = sqliteTable(
+  "admin_actions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    at: text("at").notNull().default(now),
+    adminId: text("admin_id").notNull(),
+    // 'dispute-resolve' | 'balance-adjust' | 'market-cancel'
+    action: text("action").notNull(),
+    target: text("target").notNull(),
+    details: text("details").notNull(),
+  },
+  (t) => [
+    index("idx_admin_actions_at").on(t.at),
+    index("idx_admin_actions_admin").on(t.adminId),
+  ],
+);
+
 // Append-only audit trail for every balance mutation. Every adjust…
 // write lands one row here in the same transaction, so the account
 // balance is always reconstructable by summing the ledger.
