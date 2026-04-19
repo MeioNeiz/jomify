@@ -1,6 +1,6 @@
 import { eq, or } from "drizzle-orm";
-import db from "../db.js";
-import { linkedAccounts } from "../schema.js";
+import db from "../../db.js";
+import { linkedAccounts } from "../../schema.js";
 import { assertSteam64 } from "./validate.js";
 
 export type LinkResult = {

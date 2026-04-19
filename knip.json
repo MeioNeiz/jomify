@@ -3,6 +3,8 @@
   "entry": [
     "src/cli.ts",
     "src/commands/*.ts",
+    "src/betting/commands/*.ts",
+    "src/betting/listeners/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.test.ts",
     "tests/preload.ts"

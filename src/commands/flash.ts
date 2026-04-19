@@ -1,11 +1,11 @@
 import { SlashCommandBuilder } from "discord.js";
-import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
-import { refreshPlayers } from "../refresh.js";
+import { refreshPlayers } from "../cs/refresh.js";
 import {
   getMostRecentMatchTime,
   getPlayerMatchStats,
   getPlayerStatAverages,
-} from "../store.js";
+} from "../cs/store.js";
+import { freshnessSuffix, requireTrackedGuild } from "../helpers.js";
 import { embed, pad, rankPrefix, table } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 

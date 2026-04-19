@@ -1,11 +1,11 @@
 import { type Client, EmbedBuilder, type TextChannel } from "discord.js";
+import log from "../logger.js";
+import { getNotifyChannel } from "../store.js";
 import { quickScan, SUSPECT_THRESHOLD } from "./analyse.js";
 import type { LeetifyMatchDetails } from "./leetify/types.js";
-import log from "./logger.js";
 import {
   getDiscordId,
   getGuildsForSteamId,
-  getNotifyChannel,
   isOpponentAnalysed,
   markOpponentAnalysed,
   markStreakAlerted,

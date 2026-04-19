@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { resolveSteamId } from "../src/steam/client.js";
+import { resolveSteamId } from "../src/cs/steam/client.js";
 
 process.env.STEAM_API_KEY = "test-key";
 

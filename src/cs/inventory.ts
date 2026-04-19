@@ -1,7 +1,7 @@
 import { decodeLink } from "@csfloat/cs2-inspect-serializer";
 import { z } from "zod";
-import { config } from "./config.js";
-import log from "./logger.js";
+import { config } from "../config.js";
+import log from "../logger.js";
 
 // ── Schemas for external API responses ──
 

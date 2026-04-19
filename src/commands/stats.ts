@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
+import { getProfile } from "../cs/leetify/client.js";
+import { getLatestSnapshot } from "../cs/store.js";
 import { fmt, freshnessSuffix } from "../helpers.js";
-import { getProfile } from "../leetify/client.js";
-import { getLatestSnapshot } from "../store.js";
 import { embed } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 

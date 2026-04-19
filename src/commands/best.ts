@@ -7,14 +7,7 @@ import {
   StringSelectMenuOptionBuilder,
 } from "discord.js";
 import { registerComponent } from "../components.js";
-import {
-  freshnessSuffix,
-  kdRatio,
-  outcomeTag,
-  relTime,
-  requireTrackedGuild,
-} from "../helpers.js";
-import { refreshPlayers } from "../refresh.js";
+import { refreshPlayers } from "../cs/refresh.js";
 import {
   BEST_STATS,
   type BestMatch,
@@ -22,7 +15,14 @@ import {
   getBestMatch,
   getMostRecentMatchTime,
   getTrackedPlayers,
-} from "../store.js";
+} from "../cs/store.js";
+import {
+  freshnessSuffix,
+  kdRatio,
+  outcomeTag,
+  relTime,
+  requireTrackedGuild,
+} from "../helpers.js";
 import { embed } from "../ui.js";
 import { respondWithRevalidate, wrapCommand } from "./handler.js";
 

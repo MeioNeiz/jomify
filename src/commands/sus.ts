@@ -1,13 +1,13 @@
 import { SlashCommandBuilder } from "discord.js";
-import { analyseStats, SUSPECT_THRESHOLD } from "../analyse.js";
-import { freshnessSuffix } from "../helpers.js";
-import { fetchInventorySummary, type InventorySummary } from "../inventory.js";
-import { refreshPlayers } from "../refresh.js";
+import { analyseStats, SUSPECT_THRESHOLD } from "../cs/analyse.js";
+import { fetchInventorySummary, type InventorySummary } from "../cs/inventory.js";
+import { refreshPlayers } from "../cs/refresh.js";
 import {
   getLatestSnapshot,
   getPlayerMatchStats,
   getPlayerStatAverages,
-} from "../store.js";
+} from "../cs/store.js";
+import { freshnessSuffix } from "../helpers.js";
 import { type EmbedKind, embed } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 

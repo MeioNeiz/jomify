@@ -1,15 +1,14 @@
 import type { Client, TextChannel } from "discord.js";
-import { fetchGuildProfiles } from "./helpers.js";
-import log from "./logger.js";
+import { fetchGuildProfiles } from "../helpers.js";
+import log from "../logger.js";
+import { getAllGuildIds, getNotifyChannel } from "../store.js";
+import { embed, rankPrefix } from "../ui.js";
 import {
-  getAllGuildIds,
-  getNotifyChannel,
   getWeekAgoLeaderboard,
   type PlayerSnapshot,
   saveLeaderboardSnapshot,
   saveSnapshots,
 } from "./store.js";
-import { embed, rankPrefix } from "./ui.js";
 
 const WEEKLY_COLOUR = 0x5865f2; // Discord blurple
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

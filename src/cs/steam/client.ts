@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { config } from "../config.js";
-import log from "../logger.js";
+import { config } from "../../config.js";
+import log from "../../logger.js";
 
 const VANITY_URL = "https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/";
 

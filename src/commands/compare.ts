@@ -1,7 +1,6 @@
 import { type EmbedBuilder, SlashCommandBuilder } from "discord.js";
-import { fmt, freshnessSuffix } from "../helpers.js";
-import { getProfile } from "../leetify/client.js";
-import type { LeetifyProfile } from "../leetify/types.js";
+import { getProfile } from "../cs/leetify/client.js";
+import type { LeetifyProfile } from "../cs/leetify/types.js";
 import {
   getHeadToHead,
   getLatestSnapshot,
@@ -9,7 +8,8 @@ import {
   getPlayerStatAverages,
   getSteamId,
   type PlayerAverages,
-} from "../store.js";
+} from "../cs/store.js";
+import { fmt, freshnessSuffix } from "../helpers.js";
 import { embed } from "../ui.js";
 import { respondWithRevalidate } from "./handler.js";
 

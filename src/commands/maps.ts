@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
-import { getPlayerMapStats, type MapStats } from "../store.js";
+import { getPlayerMapStats, type MapStats } from "../cs/store.js";
 import { embed, pad, table } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
 

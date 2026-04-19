@@ -5,7 +5,7 @@ import {
   leetifyMatchDetailsSchema,
   leetifyMatchHistorySchema,
   leetifyProfileSchema,
-} from "../src/leetify/schemas.js";
+} from "../src/cs/leetify/schemas.js";
 
 const steamId = process.argv[2];
 if (!steamId) {

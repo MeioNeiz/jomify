@@ -1,8 +1,8 @@
 import { SlashCommandBuilder } from "discord.js";
+import { getProfile } from "../cs/leetify/client.js";
+import { addTrackedPlayer } from "../cs/store.js";
+import { backfillPlayer } from "../cs/watcher.js";
 import { requireGuild } from "../helpers.js";
-import { getProfile } from "../leetify/client.js";
-import { addTrackedPlayer } from "../store.js";
-import { backfillPlayer } from "../watcher.js";
 import { wrapCommand } from "./handler.js";
 
 export const data = new SlashCommandBuilder()

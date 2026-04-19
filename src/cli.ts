@@ -78,7 +78,7 @@ const cmdName = argv[0];
 
 // Built-in CLI-only commands
 if (cmdName === "usage") {
-  const { getApiUsage } = await import("./store.js");
+  const { getApiUsage } = await import("./cs/store.js");
   const days = parseInt(argv[1] ?? "7", 10);
   const rows = getApiUsage(days);
   if (!rows.length) {

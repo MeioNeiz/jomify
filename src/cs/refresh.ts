@@ -1,5 +1,5 @@
+import log from "../logger.js";
 import { getMatchDetails, getProfile } from "./leetify/client.js";
-import log from "./logger.js";
 import { isMatchProcessed, markMatchProcessed, saveMatchDetails } from "./store.js";
 
 /**

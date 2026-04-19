@@ -3,9 +3,9 @@ import {
   getProfile,
   isLeetifyCircuitOpen,
   LeetifyNotFoundError,
-} from "./leetify/client.js";
-import type { LeetifyProfile } from "./leetify/types.js";
-import { getTrackedPlayers, isLeetifyUnknown } from "./store.js";
+} from "./cs/leetify/client.js";
+import type { LeetifyProfile } from "./cs/leetify/types.js";
+import { getTrackedPlayers, isLeetifyUnknown } from "./cs/store.js";
 
 /** Guild id for a slash command, or null (after replying) for a DM. */
 export async function requireGuild(

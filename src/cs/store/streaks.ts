@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
-import db from "../db.js";
-import { playerStreaks } from "../schema.js";
+import db from "../../db.js";
+import { playerStreaks } from "../../schema.js";
 
 export interface PlayerStreak {
   steamId: string;
