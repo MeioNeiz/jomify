@@ -144,6 +144,7 @@ export const execute = wrapCommand(async (interaction) => {
 // The invoker isn't necessarily the caller who ran /history, but the
 // data is tied to that steamId so anyone clicking gets the same view.
 registerComponent("history", async (interaction) => {
+  if (!interaction.isButton()) return;
   const [, action, steamId, limitStr, offsetStr] = interaction.customId.split(":");
   if (action !== "page" || !steamId || !limitStr || !offsetStr) return;
   const limit = Number(limitStr);

@@ -6,12 +6,17 @@
 // state passed back on click.
 import type {
   ButtonInteraction,
-  MessageComponentInteraction,
+  ModalSubmitInteraction,
   StringSelectMenuInteraction,
 } from "discord.js";
 import log from "./logger.js";
 
-type Handler = (interaction: MessageComponentInteraction) => Promise<void>;
+export type ComponentInteraction =
+  | ButtonInteraction
+  | StringSelectMenuInteraction
+  | ModalSubmitInteraction;
+
+type Handler = (interaction: ComponentInteraction) => Promise<void>;
 
 const handlers = new Map<string, Handler>();
 
@@ -23,7 +28,7 @@ export function registerComponent(prefix: string, handler: Handler): void {
 }
 
 export async function dispatchComponent(
-  interaction: ButtonInteraction | StringSelectMenuInteraction,
+  interaction: ComponentInteraction,
 ): Promise<void> {
   const prefix = interaction.customId.split(":")[0];
   const handler = prefix ? handlers.get(prefix) : undefined;

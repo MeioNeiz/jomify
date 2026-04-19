@@ -28,7 +28,11 @@ client.once(Events.ClientReady, (c) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+  if (
+    interaction.isButton() ||
+    interaction.isStringSelectMenu() ||
+    interaction.isModalSubmit()
+  ) {
     await dispatchComponent(interaction);
     return;
   }
