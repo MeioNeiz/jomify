@@ -4,6 +4,7 @@
 // This is the live path for balance grants. Backdating historical
 // matches belongs in a separate admin script (not runtime), which can
 // read from CS's match_stats directly — see betting-plan.md phase 3.7.
+import { getGuildsForSteamId } from "../../cs/store.js";
 import { logError } from "../../errors.js";
 import type { EventMap } from "../../events.js";
 import { on } from "../../events.js";
@@ -48,16 +49,20 @@ export function computeMatchDelta(e: Event): number {
 
 on("cs:match-completed", (e) => {
   try {
-    // Betting wallets are keyed on Discord id. Matches from a tracked
-    // but unlinked Steam account have no one to credit — skip silently.
+    // Betting wallets are keyed on (discord_id, guild_id). Matches from
+    // a tracked but unlinked Steam account have no one to credit — skip.
     if (!e.discordId) return;
     const delta = computeMatchDelta(e);
     if (delta === 0) return;
-    const next = adjustBalance(e.discordId, delta, "match", e.matchId);
-    log.debug(
-      { discordId: e.discordId, matchId: e.matchId, delta, balance: next },
-      delta > 0 ? "granted match credits" : "deducted match penalty",
-    );
+    // Apply the grant to every guild that tracks this steam ID.
+    const guildIds = getGuildsForSteamId(e.steamId);
+    for (const guildId of guildIds) {
+      const next = adjustBalance(e.discordId, guildId, delta, "match", e.matchId);
+      log.debug(
+        { discordId: e.discordId, guildId, matchId: e.matchId, delta, balance: next },
+        delta > 0 ? "granted match credits" : "deducted match penalty",
+      );
+    }
   } catch (err) {
     // Never throw back into the emitter — it will swallow and write to
     // the errors table anyway, but an explicit log here gives the row a

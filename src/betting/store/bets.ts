@@ -222,19 +222,20 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
     const winners = rows.filter((w) => w.outcome === winningOutcome);
     const losers = rows.filter((w) => w.outcome !== winningOutcome);
 
+    const guildId = bet.guildId;
     function credit(discordId: string, amount: number, reason: string) {
       const acct = tx
         .select({ balance: accounts.balance })
         .from(accounts)
-        .where(eq(accounts.discordId, discordId))
+        .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
         .get();
       const current = acct?.balance ?? 0;
       tx.update(accounts)
         .set({ balance: current + amount })
-        .where(eq(accounts.discordId, discordId))
+        .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
         .run();
       tx.insert(ledger)
-        .values({ discordId, delta: amount, reason, ref: String(betId) })
+        .values({ discordId, guildId, delta: amount, reason, ref: String(betId) })
         .run();
     }
 
@@ -282,6 +283,7 @@ export function reopenBet(betId: number): void {
     if (!bet) throw new Error(`Bet ${betId} does not exist`);
     if (bet.status === "open") return;
 
+    const guildId = bet.guildId;
     const rows = tx
       .select()
       .from(ledger)
@@ -296,7 +298,7 @@ export function reopenBet(betId: number): void {
       const acct = tx
         .select({ balance: accounts.balance })
         .from(accounts)
-        .where(eq(accounts.discordId, r.discordId))
+        .where(and(eq(accounts.discordId, r.discordId), eq(accounts.guildId, guildId)))
         .get();
       const current = acct?.balance ?? 0;
       // Want to apply -r.delta. Floor at 0: clamp to -current.
@@ -304,11 +306,12 @@ export function reopenBet(betId: number): void {
       if (reversed === 0) continue;
       tx.update(accounts)
         .set({ balance: current + reversed })
-        .where(eq(accounts.discordId, r.discordId))
+        .where(and(eq(accounts.discordId, r.discordId), eq(accounts.guildId, guildId)))
         .run();
       tx.insert(ledger)
         .values({
           discordId: r.discordId,
+          guildId,
           delta: reversed,
           reason: "bet-reverse",
           ref: String(betId),
@@ -334,21 +337,23 @@ export function cancelBet(betId: number): void {
     if (!bet) throw new Error(`Bet ${betId} does not exist`);
     if (bet.status !== "open") return;
 
+    const guildId = bet.guildId;
     const rows = tx.select().from(wagers).where(eq(wagers.betId, betId)).all();
     for (const w of rows) {
       const acct = tx
         .select({ balance: accounts.balance })
         .from(accounts)
-        .where(eq(accounts.discordId, w.discordId))
+        .where(and(eq(accounts.discordId, w.discordId), eq(accounts.guildId, guildId)))
         .get();
       const current = acct?.balance ?? 0;
       tx.update(accounts)
         .set({ balance: current + w.amount })
-        .where(eq(accounts.discordId, w.discordId))
+        .where(and(eq(accounts.discordId, w.discordId), eq(accounts.guildId, guildId)))
         .run();
       tx.insert(ledger)
         .values({
           discordId: w.discordId,
+          guildId,
           delta: w.amount,
           reason: "bet-cancel",
           ref: String(betId),

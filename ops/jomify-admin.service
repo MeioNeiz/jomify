@@ -1,17 +1,16 @@
 [Unit]
 Description=Jomify Admin Site
 After=network.target jomify.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
 User=opc
 WorkingDirectory=/home/opc/jomify
-EnvironmentFile=/home/opc/jomify/.env
 ExecStart=/home/opc/.bun/bin/bun run admin/index.ts
 Restart=always
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
 StandardOutput=journal
 StandardError=journal
 

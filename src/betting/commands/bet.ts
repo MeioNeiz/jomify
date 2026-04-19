@@ -37,9 +37,10 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
   // Seed on first view so the embed always shows the starting grant
   // instead of a confusing 0. Cheap + idempotent.
   const discordId = interaction.user.id;
-  ensureAccount(discordId);
-  const balance = getBalance(discordId);
-  const ledgerRows = getRecentLedger(discordId, 8);
+  const guildId = interaction.guildId!;
+  ensureAccount(discordId, guildId);
+  const balance = getBalance(discordId, guildId);
+  const ledgerRows = getRecentLedger(discordId, guildId, 8);
   const rows = ledgerRows.map((r) => {
     const sign = r.delta > 0 ? `+${r.delta}` : String(r.delta);
     const ref = r.ref ? `#${r.ref}` : "";
@@ -54,8 +55,9 @@ async function handleBalance(interaction: ChatInputCommandInteraction) {
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
   const view = interaction.options.getString("view") ?? "current";
+  const guildId = interaction.guildId!;
   if (view === "all-time") {
-    const rows = getAllTimeWins(10);
+    const rows = getAllTimeWins(guildId, 10);
     if (!rows.length) {
       await interaction.editReply("No weeks resolved yet — check back Monday.");
       return;
@@ -71,7 +73,7 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  const rows = getCurrentStandings(10);
+  const rows = getCurrentStandings(guildId, 10);
   if (!rows.length) {
     await interaction.editReply(
       `No ${CURRENCY.plural} yet — play a match to get started.`,

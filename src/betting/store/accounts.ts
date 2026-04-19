@@ -1,13 +1,13 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { STARTING_BALANCE } from "../config.js";
 import db from "../db.js";
 import { accounts, ledger } from "../schema.js";
 
-export function getBalance(discordId: string): number {
+export function getBalance(discordId: string, guildId: string): number {
   const row = db
     .select({ balance: accounts.balance })
     .from(accounts)
-    .where(eq(accounts.discordId, discordId))
+    .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
     .get();
   return row?.balance ?? 0;
 }
@@ -17,19 +17,25 @@ export function getBalance(discordId: string): number {
  * starting-grant ledger row. Idempotent: a no-op when the account
  * already exists. Callers that just need the account to exist (e.g.
  * `/bet balance` on a first-time user) should prefer this over
- * adjustBalance(id, 0, …) for intent clarity.
+ * adjustBalance(id, guildId, 0, …) for intent clarity.
  */
-export function ensureAccount(discordId: string): void {
+export function ensureAccount(discordId: string, guildId: string): void {
   db.transaction((tx) => {
     const existing = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.discordId, discordId))
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
       .get();
     if (existing) return;
-    tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
+    tx.insert(accounts).values({ discordId, guildId, balance: STARTING_BALANCE }).run();
     tx.insert(ledger)
-      .values({ discordId, delta: STARTING_BALANCE, reason: "starting-grant", ref: null })
+      .values({
+        discordId,
+        guildId,
+        delta: STARTING_BALANCE,
+        reason: "starting-grant",
+        ref: null,
+      })
       .run();
   });
 }
@@ -50,6 +56,7 @@ export function ensureAccount(discordId: string): void {
  */
 export function adjustBalance(
   discordId: string,
+  guildId: string,
   delta: number,
   reason: string,
   ref: string | null = null,
@@ -60,14 +67,15 @@ export function adjustBalance(
     const existing = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.discordId, discordId))
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
       .get();
     const startBalance = existing?.balance;
     if (startBalance == null) {
-      tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
+      tx.insert(accounts).values({ discordId, guildId, balance: STARTING_BALANCE }).run();
       tx.insert(ledger)
         .values({
           discordId,
+          guildId,
           delta: STARTING_BALANCE,
           reason: "starting-grant",
           ref: null,
@@ -80,9 +88,11 @@ export function adjustBalance(
     if (effectiveDelta === 0) return next; // no-op, skip the writes
     tx.update(accounts)
       .set({ balance: next })
-      .where(eq(accounts.discordId, discordId))
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
       .run();
-    tx.insert(ledger).values({ discordId, delta: effectiveDelta, reason, ref }).run();
+    tx.insert(ledger)
+      .values({ discordId, guildId, delta: effectiveDelta, reason, ref })
+      .run();
     return next;
   });
 }

@@ -61,18 +61,20 @@ export function placeWager(
 
     // Inline balance debit (can't call adjustBalance — it opens its own
     // transaction). Same contract: no balance move without a ledger row.
+    const guildId = bet.guildId;
     const account = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.discordId, discordId))
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
       .get();
     const balance = account?.balance;
     if (balance == null) {
       // Lazy-create starting grant, then immediately check against it.
-      tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
+      tx.insert(accounts).values({ discordId, guildId, balance: STARTING_BALANCE }).run();
       tx.insert(ledger)
         .values({
           discordId,
+          guildId,
           delta: STARTING_BALANCE,
           reason: "starting-grant",
           ref: null,
@@ -85,10 +87,16 @@ export function placeWager(
     }
     tx.update(accounts)
       .set({ balance: current - amount })
-      .where(eq(accounts.discordId, discordId))
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
       .run();
     tx.insert(ledger)
-      .values({ discordId, delta: -amount, reason: "bet-placed", ref: String(betId) })
+      .values({
+        discordId,
+        guildId,
+        delta: -amount,
+        reason: "bet-placed",
+        ref: String(betId),
+      })
       .run();
 
     // Compute LMSR shares and update running market state.

@@ -781,7 +781,7 @@ async function handleChallenge(
   const durationChoice = interaction.options.getString("duration");
   const expiresAt = expiryIso(durationHours(durationChoice));
 
-  const balance = getBalance(interaction.user.id);
+  const balance = getBalance(interaction.user.id, guildId);
   if (amount > balance) {
     await interaction.editReply(
       `You only have **${balance}** shekels — not enough to stake **${amount}**.`,
@@ -937,7 +937,7 @@ registerComponent("market", async (interaction) => {
       });
       return;
     }
-    const balance = getBalance(interaction.user.id);
+    const balance = getBalance(interaction.user.id, interaction.guildId!);
     // Show current odds in the modal title so the user knows what they're
     // stepping into before they commit an amount.
     const oddsStr =
@@ -1003,7 +1003,7 @@ registerComponent("market", async (interaction) => {
       return;
     }
 
-    const balance = getBalance(interaction.user.id);
+    const balance = getBalance(interaction.user.id, interaction.guildId!);
     if (interaction.isFromMessage()) {
       await interaction.update(renderMarketView(betId));
     }
@@ -1057,7 +1057,7 @@ registerComponent("market", async (interaction) => {
       });
       return;
     }
-    const balance = getBalance(interaction.user.id);
+    const balance = getBalance(interaction.user.id, interaction.guildId!);
     const modal = new ModalBuilder()
       .setCustomId(`market:modal:${betId}:${oppSide}`)
       .setTitle(`Counter ${oppSide.toUpperCase()} #${betId}`)

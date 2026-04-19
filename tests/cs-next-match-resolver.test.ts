@@ -65,7 +65,7 @@ beforeEach(() => {
 
 describe("cs:next-match-win", () => {
   test("match after market opens + win → yes resolution", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Will they win?", null, {
       resolverKind: "cs:next-match-win",
       resolverArgs: { steamId: STEAM },
@@ -95,7 +95,7 @@ describe("cs:next-match-win", () => {
   });
 
   test("loss → no resolution", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Will they win?", null, {
       resolverKind: "cs:next-match-win",
       resolverArgs: { steamId: STEAM },
@@ -118,7 +118,7 @@ describe("cs:next-match-win", () => {
   });
 
   test("tie → cancel (refund)", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Will they win?", null, {
       resolverKind: "cs:next-match-win",
       resolverArgs: { steamId: STEAM },
@@ -172,7 +172,7 @@ describe("cs:next-match-win", () => {
 
 describe("cs:next-match-rating-above", () => {
   test("rating ≥ threshold → yes", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Rating ≥ 0.05?", null, {
       resolverKind: "cs:next-match-rating-above",
       resolverArgs: { steamId: STEAM, threshold: 0.05 },
@@ -194,7 +194,7 @@ describe("cs:next-match-rating-above", () => {
   });
 
   test("rating below threshold → no", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Rating ≥ 0.05?", null, {
       resolverKind: "cs:next-match-rating-above",
       resolverArgs: { steamId: STEAM, threshold: 0.05 },
@@ -216,7 +216,7 @@ describe("cs:next-match-rating-above", () => {
   });
 
   test("null rating → cancel (refund)", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Rating ≥ 0.05?", null, {
       resolverKind: "cs:next-match-rating-above",
       resolverArgs: { steamId: STEAM, threshold: 0.05 },
@@ -240,7 +240,7 @@ describe("cs:next-match-rating-above", () => {
 
 describe("cs:next-match-kills-above", () => {
   test("kills > threshold → yes", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Over 20 kills?", null, {
       resolverKind: "cs:next-match-kills-above",
       resolverArgs: { steamId: STEAM, threshold: 20 },
@@ -262,7 +262,7 @@ describe("cs:next-match-kills-above", () => {
   });
 
   test("kills == threshold (strict >) → no", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Over 20 kills?", null, {
       resolverKind: "cs:next-match-kills-above",
       resolverArgs: { steamId: STEAM, threshold: 20 },
@@ -284,7 +284,7 @@ describe("cs:next-match-kills-above", () => {
   });
 
   test("missing threshold → cancel", async () => {
-    adjustBalance(BETTOR, 95, "seed");
+    adjustBalance(BETTOR, GUILD, 95, "seed");
     const id = createBet(GUILD, CREATOR, "Kills above ??", null, {
       resolverKind: "cs:next-match-kills-above",
       resolverArgs: { steamId: STEAM }, // no threshold

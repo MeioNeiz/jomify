@@ -9,11 +9,11 @@
 //                rating delta since last week.
 //   - cs       — guild has tracked CS players, no bettors. Sort by
 //                premier, show rating/position deltas.
-//   - betting  — guild has no tracked CS players but the bot has
-//                balances. Show global top balances.
+//   - betting  — guild has no tracked CS players but has betting
+//                accounts. Show guild top balances.
 //   - skip     — nothing to post.
 import type { Client, TextChannel } from "discord.js";
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { STARTING_BALANCE, WEEKLY_ARCHIVE_RANKS } from "./betting/config.js";
 import bettingDb from "./betting/db.js";
 import { accounts, weeklyWins } from "./betting/schema.js";
@@ -96,15 +96,16 @@ function lastSundayIso(now = new Date()): string {
 }
 
 /**
- * Archive top-N live balances, then wipe every account back to
- * STARTING_BALANCE. Returns the pre-wipe balance map so the caller can
- * render it into the weekly embed.
+ * Archive top-N live balances for a guild, then wipe all guild accounts
+ * back to STARTING_BALANCE. Returns the pre-wipe balance map so the
+ * caller can render it into the weekly embed.
  */
-function runReset(weekEnding: string): Map<string, number> {
+function runReset(weekEnding: string, guildId: string): Map<string, number> {
   return bettingDb.transaction((tx) => {
     const all = tx
       .select({ discordId: accounts.discordId, balance: accounts.balance })
       .from(accounts)
+      .where(eq(accounts.guildId, guildId))
       .all();
     const top = [...all]
       .sort((a, b) => b.balance - a.balance)
@@ -115,13 +116,17 @@ function runReset(weekEnding: string): Map<string, number> {
       tx.insert(weeklyWins)
         .values({
           weekEnding,
+          guildId,
           discordId: row.discordId,
           rank: i + 1,
           balanceSnapshot: row.balance,
         })
         .run();
     }
-    tx.update(accounts).set({ balance: STARTING_BALANCE }).where(sql`1 = 1`).run();
+    tx.update(accounts)
+      .set({ balance: STARTING_BALANCE })
+      .where(eq(accounts.guildId, guildId))
+      .run();
     return new Map(all.map((r) => [r.discordId, r.balance]));
   });
 }
@@ -341,18 +346,19 @@ async function postGuild(
 async function tick(client: Client) {
   try {
     const weekEnding = lastSundayIso();
-    // Archive + wipe first; the returned map is the pre-wipe balances
-    // we render against. Doing it up front also means a crash mid-loop
-    // can't leave the reset half-applied.
-    const balances = runReset(weekEnding);
+    let totalWallets = 0;
     for (const guildId of getAllGuildIds()) {
       try {
+        // Reset and post are paired per-guild so a crash in one guild
+        // doesn't leave others unreset.
+        const balances = runReset(weekEnding, guildId);
+        totalWallets += balances.size;
         await postGuild(client, guildId, balances);
       } catch (err) {
         log.error({ guildId, err }, "Weekly guild post failed");
       }
     }
-    log.info({ weekEnding, wallets: balances.size }, "Weekly cycle done");
+    log.info({ weekEnding, wallets: totalWallets }, "Weekly cycle done");
   } catch (err) {
     log.error({ err }, "Weekly tick failed");
   }
