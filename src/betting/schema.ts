@@ -80,6 +80,55 @@ export const weeklyWins = sqliteTable(
   (t) => [index("idx_weekly_wins_week").on(t.weekEnding)],
 );
 
+// A dispute challenges a resolved market. Opening one costs
+// DISPUTE_COST shekels and posts a vote panel so other involved
+// parties can weigh in. Resolution is gated on Discord's ManageGuild
+// permission — admin picks keep/flip/cancel and the store reverses
+// the original payouts before re-applying the corrected outcome.
+export const disputes = sqliteTable(
+  "disputes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    betId: integer("bet_id")
+      .notNull()
+      .references(() => bets.id),
+    openerDiscordId: text("opener_discord_id").notNull(),
+    reason: text("reason").notNull(),
+    // 'open' | 'resolved'
+    status: text("status").notNull(),
+    // 'keep' | 'flip' | 'cancel' — set when status flips to resolved.
+    finalAction: text("final_action"),
+    // 'yes' | 'no' — set only when finalAction is 'flip' or 'keep'.
+    finalOutcome: text("final_outcome"),
+    resolverDiscordId: text("resolver_discord_id"),
+    openedAt: text("opened_at").notNull().default(now),
+    resolvedAt: text("resolved_at"),
+    channelId: text("channel_id"),
+    messageId: text("message_id"),
+  },
+  (t) => [
+    index("idx_disputes_bet").on(t.betId),
+    index("idx_disputes_status").on(t.status),
+  ],
+);
+
+// One vote per (dispute, discord_id). Re-voting overwrites. Gated at
+// the handler level to users who are involved in the underlying bet
+// (creator or a wager-holder).
+export const disputeVotes = sqliteTable(
+  "dispute_votes",
+  {
+    disputeId: integer("dispute_id")
+      .notNull()
+      .references(() => disputes.id),
+    discordId: text("discord_id").notNull(),
+    // 'overturn' | 'keep'
+    vote: text("vote").notNull(),
+    votedAt: text("voted_at").notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.disputeId, t.discordId] })],
+);
+
 // Append-only audit trail for every balance mutation. Every adjust…
 // write lands one row here in the same transaction, so the account
 // balance is always reconstructable by summing the ledger.

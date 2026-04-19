@@ -100,6 +100,37 @@ sqlite.run(`
     ON ledger (discord_id, at)
 `);
 sqlite.run(`
+  CREATE TABLE IF NOT EXISTS disputes (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    bet_id              INTEGER NOT NULL REFERENCES bets(id),
+    opener_discord_id   TEXT NOT NULL,
+    reason              TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    final_action        TEXT,
+    final_outcome       TEXT,
+    resolver_discord_id TEXT,
+    opened_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at         TEXT,
+    channel_id          TEXT,
+    message_id          TEXT
+  )
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_disputes_bet ON disputes (bet_id)
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes (status)
+`);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS dispute_votes (
+    dispute_id INTEGER NOT NULL REFERENCES disputes(id),
+    discord_id TEXT NOT NULL,
+    vote       TEXT NOT NULL,
+    voted_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (dispute_id, discord_id)
+  )
+`);
+sqlite.run(`
   CREATE TABLE IF NOT EXISTS weekly_wins (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     week_ending      TEXT NOT NULL,

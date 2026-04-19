@@ -42,3 +42,9 @@ export const PENALTY_LOSS_STREAK = 1;
 // the Monday post (top 3) + a little headroom for histogram queries
 // later.
 export const WEEKLY_ARCHIVE_RANKS = 5;
+
+// Cost to open a dispute on a resolved market. Deducted from the
+// opener's wallet on Report submit; goes to the house, not refunded
+// even on a successful overturn. Keeps drive-by reporting cheap
+// enough to stay useful but not free.
+export const DISPUTE_COST = 5;
