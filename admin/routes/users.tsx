@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { accounts, bets, disputes, ledger, wagers } from "../../src/betting/schema.js";
 import { adjustBalance } from "../../src/betting/store/accounts.js";
@@ -33,7 +33,11 @@ router.get("/", async (c) => {
   const [{ total }] = db.select({ total: count() }).from(accounts).all();
 
   const rows = db
-    .select({ discordId: accounts.discordId, balance: accounts.balance })
+    .select({
+      discordId: accounts.discordId,
+      guildId: accounts.guildId,
+      balance: accounts.balance,
+    })
     .from(accounts)
     .orderBy(desc(accounts.balance))
     .limit(PAGE_SIZE)
@@ -68,16 +72,21 @@ router.get("/", async (c) => {
       <>
         <H1>Users</H1>
         <Card>
-          <Table headers={["Discord ID", "Balance", "Wagers", "Disputes", ""]}>
+          <Table
+            headers={["Discord ID", "Guild ID", "Balance", "Wagers", "Disputes", ""]}
+          >
             {rows.map((a) => (
               <Tr>
                 <Td>
                   <a
-                    href={`/users/${a.discordId}`}
+                    href={`/users/${a.guildId}/${a.discordId}`}
                     class="font-mono text-xs text-pink-400 hover:text-pink-300"
                   >
                     {a.discordId}
                   </a>
+                </Td>
+                <Td>
+                  <span class="font-mono text-xs text-gray-400">{a.guildId}</span>
                 </Td>
                 <Td>
                   <span class="font-bold">{a.balance}</span>
@@ -86,7 +95,7 @@ router.get("/", async (c) => {
                 <Td>{disputesCounts[a.discordId] ?? 0}</Td>
                 <Td>
                   <a
-                    href={`/users/${a.discordId}`}
+                    href={`/users/${a.guildId}/${a.discordId}`}
                     class="text-xs text-gray-400 hover:text-white"
                   >
                     Detail →
@@ -102,27 +111,32 @@ router.get("/", async (c) => {
   );
 });
 
-router.get("/:discordId", async (c) => {
+router.get("/:guildId/:discordId", async (c) => {
   const user = c.get("user");
   const csrf = c.get("csrf");
   const discordId = c.req.param("discordId");
+  const guildId = c.req.param("guildId");
   const lPage = Math.max(1, parseInt(c.req.query("lpage") ?? "1", 10));
   const flash = c.req.query("flash");
 
-  const acct = db.select().from(accounts).where(eq(accounts.discordId, discordId)).get();
+  const acct = db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
+    .get();
   if (!acct) return c.text("User not found", 404);
 
   const lOffset = (lPage - 1) * LEDGER_PAGE;
   const [{ lTotal }] = db
     .select({ lTotal: count() })
     .from(ledger)
-    .where(eq(ledger.discordId, discordId))
+    .where(and(eq(ledger.discordId, discordId), eq(ledger.guildId, guildId)))
     .all();
 
   const ledgerRows = db
     .select()
     .from(ledger)
-    .where(eq(ledger.discordId, discordId))
+    .where(and(eq(ledger.discordId, discordId), eq(ledger.guildId, guildId)))
     .orderBy(desc(ledger.at))
     .limit(LEDGER_PAGE)
     .offset(lOffset)
@@ -170,6 +184,7 @@ router.get("/:discordId", async (c) => {
           </a>
           <H1>User</H1>
           <code class="text-pink-400 text-sm">{discordId}</code>
+          <span class="text-gray-500 text-xs">guild {guildId}</span>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -183,7 +198,7 @@ router.get("/:discordId", async (c) => {
             <H2>Adjust balance</H2>
             <form
               method="post"
-              action={`/users/${discordId}/adjust`}
+              action={`/users/${guildId}/${discordId}/adjust`}
               class="flex gap-2 items-end"
             >
               <HiddenCsrf token={csrf} />
@@ -242,7 +257,7 @@ router.get("/:discordId", async (c) => {
                 page={lPage}
                 total={lTotal}
                 pageSize={LEDGER_PAGE}
-                url={`/users/${discordId}?`}
+                url={`/users/${guildId}/${discordId}?`}
               />
             </Card>
           </div>
@@ -313,9 +328,10 @@ router.get("/:discordId", async (c) => {
   );
 });
 
-router.post("/:discordId/adjust", async (c) => {
+router.post("/:guildId/:discordId/adjust", async (c) => {
   const user = c.get("user");
   const discordId = c.req.param("discordId");
+  const guildId = c.req.param("guildId");
   const body = await c.req.parseBody();
   const delta = parseInt(body.delta as string, 10);
   const reason = ((body.reason as string) ?? "").trim().slice(0, 80);
@@ -327,14 +343,15 @@ router.post("/:discordId/adjust", async (c) => {
     return c.text("Reason required", 400);
   }
 
-  adjustBalance(discordId, delta, `admin:${reason}`);
-  logAdminAction(user.discordId, "balance-adjust", `user:${discordId}`, {
+  adjustBalance(discordId, guildId, delta, `admin:${reason}`);
+  logAdminAction(user.discordId, "balance-adjust", `user:${discordId}:${guildId}`, {
     delta,
     reason,
+    guildId,
   });
 
   return c.redirect(
-    `/users/${discordId}?flash=Balance+adjusted+by+${delta > 0 ? "+" : ""}${delta}.`,
+    `/users/${guildId}/${discordId}?flash=Balance+adjusted+by+${delta > 0 ? "+" : ""}${delta}.`,
   );
 });
 

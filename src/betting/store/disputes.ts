@@ -100,10 +100,11 @@ export function openDispute(
     }
 
     // Debit dispute cost (no clamp — opener must be solvent).
+    const guildId = bet.guildId;
     const acct = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.discordId, openerDiscordId))
+      .where(and(eq(accounts.discordId, openerDiscordId), eq(accounts.guildId, guildId)))
       .get();
     const balance = acct?.balance ?? 0;
     if (balance < DISPUTE_COST) {
@@ -113,11 +114,12 @@ export function openDispute(
     }
     tx.update(accounts)
       .set({ balance: balance - DISPUTE_COST })
-      .where(eq(accounts.discordId, openerDiscordId))
+      .where(and(eq(accounts.discordId, openerDiscordId), eq(accounts.guildId, guildId)))
       .run();
     tx.insert(ledger)
       .values({
         discordId: openerDiscordId,
+        guildId,
         delta: -DISPUTE_COST,
         reason: "dispute-open",
         ref: String(betId),

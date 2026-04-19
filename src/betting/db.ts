@@ -27,13 +27,35 @@ sqlite.run("PRAGMA foreign_keys = ON");
 // checks for the old column before doing anything.
 rekeyToDiscord(sqlite);
 
+// Migrate accounts to per-guild composite PK. Runs before CREATE TABLE
+// so old DBs get the new shape; fresh DBs skip (table doesn't exist).
+if (tableExists(sqlite, "accounts") && !hasColumn(sqlite, "accounts", "guild_id")) {
+  sqlite.run(`ALTER TABLE accounts RENAME TO accounts_legacy`);
+  sqlite.run(`
+    CREATE TABLE accounts (
+      discord_id TEXT NOT NULL,
+      guild_id   TEXT NOT NULL DEFAULT '',
+      balance    INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (discord_id, guild_id)
+    )
+  `);
+  sqlite.run(
+    `INSERT OR IGNORE INTO accounts SELECT discord_id, '', balance, created_at FROM accounts_legacy`,
+  );
+  sqlite.run(`DROP TABLE accounts_legacy`);
+}
+
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS accounts (
-    discord_id TEXT PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    guild_id   TEXT NOT NULL,
     balance    INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (discord_id, guild_id)
   )
 `);
+sqlite.run(`CREATE INDEX IF NOT EXISTS idx_accounts_guild ON accounts (guild_id)`);
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS bets (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,15 +136,25 @@ sqlite.run(`
   CREATE TABLE IF NOT EXISTS ledger (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     discord_id TEXT NOT NULL,
+    guild_id   TEXT NOT NULL DEFAULT '',
     delta      INTEGER NOT NULL,
     reason     TEXT NOT NULL,
     ref        TEXT,
     at         TEXT NOT NULL DEFAULT (datetime('now'))
   )
 `);
+try {
+  sqlite.run(`ALTER TABLE ledger ADD COLUMN guild_id TEXT NOT NULL DEFAULT ''`);
+} catch {
+  /* already exists */
+}
 sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_ledger_discord_at
     ON ledger (discord_id, at)
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_ledger_guild_discord
+    ON ledger (guild_id, discord_id)
 `);
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS disputes (
@@ -159,14 +191,20 @@ sqlite.run(`
   CREATE TABLE IF NOT EXISTS weekly_wins (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     week_ending      TEXT NOT NULL,
+    guild_id         TEXT NOT NULL DEFAULT '',
     discord_id       TEXT NOT NULL,
     rank             INTEGER NOT NULL,
     balance_snapshot INTEGER NOT NULL
   )
 `);
+try {
+  sqlite.run(`ALTER TABLE weekly_wins ADD COLUMN guild_id TEXT NOT NULL DEFAULT ''`);
+} catch {
+  /* already exists */
+}
 sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_weekly_wins_week
-    ON weekly_wins (week_ending)
+    ON weekly_wins (week_ending, guild_id)
 `);
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS admin_actions (

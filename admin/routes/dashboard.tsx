@@ -66,7 +66,11 @@ router.get("/", async (c) => {
     .all();
 
   const topBalances = db
-    .select({ discordId: accounts.discordId, balance: accounts.balance })
+    .select({
+      discordId: accounts.discordId,
+      guildId: accounts.guildId,
+      balance: accounts.balance,
+    })
     .from(accounts)
     .orderBy(desc(accounts.balance))
     .limit(5)
@@ -158,7 +162,7 @@ router.get("/", async (c) => {
               {topBalances.map((a, i) => (
                 <div class="flex justify-between py-1 text-sm border-b border-gray-800 last:border-0">
                   <a
-                    href={`/users/${a.discordId}`}
+                    href={`/users/${a.guildId}/${a.discordId}`}
                     class="text-gray-300 hover:text-white font-mono text-xs truncate max-w-[140px]"
                   >
                     #{i + 1} {a.discordId}

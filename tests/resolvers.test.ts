@@ -103,8 +103,8 @@ describe("resolver poller", () => {
       check: async () => ({ kind: "resolve", outcome: "yes" }),
     });
     // Seed balances so the wagers don't blow through STARTING_BALANCE.
-    adjustBalance(BETTOR_A, 95, "seed"); // 100
-    adjustBalance(BETTOR_B, 95, "seed"); // 100
+    adjustBalance(BETTOR_A, GUILD, 95, "seed"); // 100
+    adjustBalance(BETTOR_B, GUILD, 95, "seed"); // 100
     const id = makeResolverBet("test:resolve", {});
     placeWager(id, BETTOR_A, "yes", 10); // winner
     placeWager(id, BETTOR_B, "no", 20); // loser
@@ -120,13 +120,13 @@ describe("resolver poller", () => {
       kind: "test:cancel",
       check: async () => ({ kind: "cancel", note: "upstream voided" }),
     });
-    adjustBalance(BETTOR_A, 95, "seed");
+    adjustBalance(BETTOR_A, GUILD, 95, "seed");
     const id = makeResolverBet("test:cancel", {});
     placeWager(id, BETTOR_A, "yes", 5);
     const before = db
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(sql`${accounts.discordId} = ${BETTOR_A}`)
+      .where(sql`${accounts.discordId} = ${BETTOR_A} AND ${accounts.guildId} = ${GUILD}`)
       .get();
 
     await tick(fakeClient);
@@ -135,7 +135,7 @@ describe("resolver poller", () => {
     const after = db
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(sql`${accounts.discordId} = ${BETTOR_A}`)
+      .where(sql`${accounts.discordId} = ${BETTOR_A} AND ${accounts.guildId} = ${GUILD}`)
       .get();
     // Refund restored the 5 shekels that the wager had deducted.
     expect((after?.balance ?? 0) - (before?.balance ?? 0)).toBe(5);
@@ -180,7 +180,7 @@ describe("resolver poller", () => {
         return { kind: "resolve", outcome: "yes" };
       },
     });
-    adjustBalance(BETTOR_A, 95, "seed");
+    adjustBalance(BETTOR_A, GUILD, 95, "seed");
     const id = makeResolverBet("test:should-skip", {});
     placeWager(id, BETTOR_A, "yes", 3);
     resolveBet(id, "no"); // manual resolve first

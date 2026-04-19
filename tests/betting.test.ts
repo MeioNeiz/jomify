@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import {
   BAD_GAME_RATING,
   MATCH_GRANT_BASE,
@@ -40,13 +40,15 @@ const DISCORD_D = "100000000000000004";
 const CREATOR_DISCORD = "100000000000000099";
 const STEAM_A = "76561198000000001";
 
-// Sum of every ledger delta for a discordId. Invariant: should equal the
-// accounts.balance row for that discordId.
-function ledgerSum(discordId: string): number {
+// Sum of every ledger delta for a (discordId, guildId). Invariant:
+// should equal the accounts.balance row for that pair.
+function ledgerSum(discordId: string, guildId = GUILD): number {
   const row = db
     .select({ total: sql<number>`COALESCE(SUM(${ledger.delta}), 0)` })
     .from(ledger)
-    .where(sql`${ledger.discordId} = ${discordId}`)
+    .where(
+      and(sql`${ledger.discordId} = ${discordId}`, sql`${ledger.guildId} = ${guildId}`),
+    )
     .get();
   return row?.total ?? 0;
 }
@@ -64,77 +66,77 @@ beforeEach(() => {
 describe("accounts — adjustBalance + getBalance + ensureAccount", () => {
   test("first call lazy-creates account with starting balance + starting-grant row", () => {
     // Positive delta triggers the lazy create path on a fresh wallet.
-    const next = adjustBalance(DISCORD_A, 3, "match", "m-1");
+    const next = adjustBalance(DISCORD_A, GUILD, 3, "match", "m-1");
     expect(next).toBe(STARTING_BALANCE + 3);
-    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE + 3);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(STARTING_BALANCE + 3);
 
-    const rows = getRecentLedger(DISCORD_A, 10);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     // Oldest row is the starting grant, newest is the adjustment.
     expect(rows.map((r) => r.reason)).toEqual(["match", "starting-grant"]);
     expect(rows.map((r) => r.delta)).toEqual([3, STARTING_BALANCE]);
   });
 
   test("ensureAccount lazy-creates with starting grant on first call; no-op after", () => {
-    expect(getBalance(DISCORD_A)).toBe(0); // no row yet
-    ensureAccount(DISCORD_A);
-    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
-    const firstRows = getRecentLedger(DISCORD_A, 10);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(0); // no row yet
+    ensureAccount(DISCORD_A, GUILD);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(STARTING_BALANCE);
+    const firstRows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(firstRows.map((r) => r.reason)).toEqual(["starting-grant"]);
 
     // Second call must not add a second grant row.
-    ensureAccount(DISCORD_A);
-    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
-    expect(getRecentLedger(DISCORD_A, 10).length).toBe(firstRows.length);
+    ensureAccount(DISCORD_A, GUILD);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(STARTING_BALANCE);
+    expect(getRecentLedger(DISCORD_A, GUILD, 10).length).toBe(firstRows.length);
   });
 
   test("positive delta adds to balance with matching ledger row", () => {
-    adjustBalance(DISCORD_A, 0, "seed"); // lazy-create only, delta=0 after seed
+    adjustBalance(DISCORD_A, GUILD, 0, "seed"); // lazy-create only, delta=0 after seed
     // After seed: balance = STARTING_BALANCE, ledger has only starting-grant.
-    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(STARTING_BALANCE);
 
-    adjustBalance(DISCORD_A, 7, "bonus");
-    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE + 7);
-    const rows = getRecentLedger(DISCORD_A, 10);
+    adjustBalance(DISCORD_A, GUILD, 7, "bonus");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(STARTING_BALANCE + 7);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(rows[0]?.delta).toBe(7);
     expect(rows[0]?.reason).toBe("bonus");
   });
 
   test("negative delta within balance decreases balance, writes that delta", () => {
-    adjustBalance(DISCORD_A, 10, "grant"); // balance = STARTING_BALANCE + 10
-    const balBefore = getBalance(DISCORD_A);
-    adjustBalance(DISCORD_A, -4, "debit");
-    expect(getBalance(DISCORD_A)).toBe(balBefore - 4);
-    const rows = getRecentLedger(DISCORD_A, 10);
+    adjustBalance(DISCORD_A, GUILD, 10, "grant"); // balance = STARTING_BALANCE + 10
+    const balBefore = getBalance(DISCORD_A, GUILD);
+    adjustBalance(DISCORD_A, GUILD, -4, "debit");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBefore - 4);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(rows[0]?.delta).toBe(-4);
     expect(rows[0]?.reason).toBe("debit");
   });
 
   test("negative delta below zero clamps to -current; ledger reflects clamped delta", () => {
     // Fresh wallet: STARTING_BALANCE on lazy create. Request -100 → clamp to -STARTING_BALANCE.
-    adjustBalance(DISCORD_A, -100, "penalty");
-    expect(getBalance(DISCORD_A)).toBe(0);
-    const rows = getRecentLedger(DISCORD_A, 10);
+    adjustBalance(DISCORD_A, GUILD, -100, "penalty");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(0);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     // Newest row is the penalty, and its delta is the *clamped* value.
     expect(rows[0]?.delta).toBe(-STARTING_BALANCE);
     expect(rows[0]?.reason).toBe("penalty");
   });
 
   test("clamped to 0 no-op: no ledger row when effectiveDelta is 0", () => {
-    adjustBalance(DISCORD_A, -100, "penalty"); // balance -> 0
-    const rowsBefore = getRecentLedger(DISCORD_A, 10).length;
-    adjustBalance(DISCORD_A, -5, "penalty-again"); // already 0, clamp is 0, no-op
-    const rowsAfter = getRecentLedger(DISCORD_A, 10).length;
+    adjustBalance(DISCORD_A, GUILD, -100, "penalty"); // balance -> 0
+    const rowsBefore = getRecentLedger(DISCORD_A, GUILD, 10).length;
+    adjustBalance(DISCORD_A, GUILD, -5, "penalty-again"); // already 0, clamp is 0, no-op
+    const rowsAfter = getRecentLedger(DISCORD_A, GUILD, 10).length;
     expect(rowsAfter).toBe(rowsBefore);
-    expect(getBalance(DISCORD_A)).toBe(0);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(0);
   });
 
   test("invariant: sum of ledger deltas equals current balance", () => {
-    adjustBalance(DISCORD_A, 5, "a");
-    adjustBalance(DISCORD_A, -3, "b");
-    adjustBalance(DISCORD_A, 100, "c");
-    adjustBalance(DISCORD_A, -200, "d"); // clamped
-    adjustBalance(DISCORD_A, 2, "e");
-    expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A));
+    adjustBalance(DISCORD_A, GUILD, 5, "a");
+    adjustBalance(DISCORD_A, GUILD, -3, "b");
+    adjustBalance(DISCORD_A, GUILD, 100, "c");
+    adjustBalance(DISCORD_A, GUILD, -200, "d"); // clamped
+    adjustBalance(DISCORD_A, GUILD, 2, "e");
+    expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A, GUILD));
   });
 });
 
@@ -195,18 +197,18 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
   // from the actual LMSR share math.
   test.skip("LMSR payout: winners receive shares × (1 − rake), early bettor gets more shares", () => {
     // Seed balances large enough to cover the stakes.
-    adjustBalance(DISCORD_A, 95, "seed"); // balance 100
-    adjustBalance(DISCORD_B, 95, "seed"); // balance 100
-    adjustBalance(DISCORD_C, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_A, GUILD, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_B, GUILD, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_C, GUILD, 95, "seed"); // balance 100
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Split?");
     placeWager(id, DISCORD_A, "yes", 10); // winner, bets first (better odds)
     placeWager(id, DISCORD_B, "yes", 20); // winner, bets after A pushed YES up
     placeWager(id, DISCORD_C, "no", 15); // loser
 
-    const balBeforeA = getBalance(DISCORD_A); // 90
-    const balBeforeB = getBalance(DISCORD_B); // 80
-    const balBeforeC = getBalance(DISCORD_C); // 85
+    const balBeforeA = getBalance(DISCORD_A, GUILD); // 90
+    const balBeforeB = getBalance(DISCORD_B, GUILD); // 80
+    const balBeforeC = getBalance(DISCORD_C, GUILD); // 85
 
     resolveBet(id, "yes");
 
@@ -214,9 +216,9 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
     // B bets 20 after A moved the market → 27.21 shares → payout 26.
     // Both get MORE than their stake back because the NO pool (15) + LMSR subsidy
     // exceeds what pari-mutuel would have paid from the NO pool alone.
-    expect(getBalance(DISCORD_A)).toBe(balBeforeA + 17);
-    expect(getBalance(DISCORD_B)).toBe(balBeforeB + 26);
-    expect(getBalance(DISCORD_C)).toBe(balBeforeC); // loser: no refund
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBeforeA + 17);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(balBeforeB + 26);
+    expect(getBalance(DISCORD_C, GUILD)).toBe(balBeforeC); // loser: no refund
 
     const bet = getBet(id);
     expect(bet?.status).toBe("resolved");
@@ -225,56 +227,56 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
   });
 
   test("cancelBet refunds every wager, marks cancelled, idempotent on re-call", () => {
-    adjustBalance(DISCORD_A, 95, "seed"); // 100
-    adjustBalance(DISCORD_B, 95, "seed"); // 100
-    const preA = getBalance(DISCORD_A);
-    const preB = getBalance(DISCORD_B);
+    adjustBalance(DISCORD_A, GUILD, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, GUILD, 95, "seed"); // 100
+    const preA = getBalance(DISCORD_A, GUILD);
+    const preB = getBalance(DISCORD_B, GUILD);
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Expires?");
     placeWager(id, DISCORD_A, "yes", 12);
     placeWager(id, DISCORD_B, "no", 7);
-    expect(getBalance(DISCORD_A)).toBe(preA - 12);
-    expect(getBalance(DISCORD_B)).toBe(preB - 7);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(preA - 12);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(preB - 7);
 
     cancelBet(id);
-    expect(getBalance(DISCORD_A)).toBe(preA);
-    expect(getBalance(DISCORD_B)).toBe(preB);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(preA);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(preB);
     expect(getBet(id)?.status).toBe("cancelled");
-    expect(getRecentLedger(DISCORD_A, 5)[0]?.reason).toBe("bet-cancel");
+    expect(getRecentLedger(DISCORD_A, GUILD, 5)[0]?.reason).toBe("bet-cancel");
 
     // Second call is a no-op — no double refund.
-    const afterOne = getBalance(DISCORD_A);
+    const afterOne = getBalance(DISCORD_A, GUILD);
     cancelBet(id);
-    expect(getBalance(DISCORD_A)).toBe(afterOne);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(afterOne);
   });
 
   // FIXME: same LMSR migration as above — reversal math expectations
   // are pari-mutuel. Re-enable once LMSR reverse-path is settled.
   test.skip("reopenBet reverses payouts + resets status; clamps when balance spent", () => {
-    adjustBalance(DISCORD_A, 95, "seed"); // 100
-    adjustBalance(DISCORD_B, 95, "seed"); // 100
+    adjustBalance(DISCORD_A, GUILD, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, GUILD, 95, "seed"); // 100
     const id = createBet(GUILD, CREATOR_DISCORD, "Flip me?");
     placeWager(id, DISCORD_A, "yes", 10); // winner (staked 10 → balance 90)
     placeWager(id, DISCORD_B, "no", 30); // loser (staked 30 → balance 70)
     resolveBet(id, "yes");
     // LMSR at b=30, 50%: A gets floor(17.49 * 0.98) = 17 → balance 90+17 = 107.
-    expect(getBalance(DISCORD_A)).toBe(107);
-    expect(getBalance(DISCORD_B)).toBe(70);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(107);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(70);
 
     // A spends 100 before dispute reversal lands — clamps since balance < spend.
     // adjustBalance floors at 0: max(-100, -107) = -100 → A = 7.
-    adjustBalance(DISCORD_A, -100, "spent");
-    expect(getBalance(DISCORD_A)).toBe(7);
+    adjustBalance(DISCORD_A, GUILD, -100, "spent");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(7);
 
     reopenBet(id);
     // A had 7; reversal wants -17 but clamps to -7.
-    expect(getBalance(DISCORD_A)).toBe(0);
-    expect(getBalance(DISCORD_B)).toBe(70); // no payout/refund to reverse for B
+    expect(getBalance(DISCORD_A, GUILD)).toBe(0);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(70); // no payout/refund to reverse for B
     expect(getBet(id)?.status).toBe("open");
     expect(getBet(id)?.winningOutcome).toBeNull();
 
     // Ledger invariant preserved.
-    const aRows = getRecentLedger(DISCORD_A, 10);
+    const aRows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(aRows.find((r) => r.reason === "bet-reverse")?.delta).toBe(-7);
   });
 
@@ -297,10 +299,10 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
   });
 
   test("no winners: losers refunded to pre-wager balance, bet-refund row written", () => {
-    adjustBalance(DISCORD_A, 95, "seed"); // 100
-    adjustBalance(DISCORD_B, 95, "seed"); // 100
-    const preA = getBalance(DISCORD_A);
-    const preB = getBalance(DISCORD_B);
+    adjustBalance(DISCORD_A, GUILD, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, GUILD, 95, "seed"); // 100
+    const preA = getBalance(DISCORD_A, GUILD);
+    const preB = getBalance(DISCORD_B, GUILD);
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Lopsided");
     placeWager(id, DISCORD_A, "no", 30);
@@ -308,13 +310,13 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
     // Nobody picked yes — resolving yes means both losers refund.
     resolveBet(id, "yes");
 
-    expect(getBalance(DISCORD_A)).toBe(preA);
-    expect(getBalance(DISCORD_B)).toBe(preB);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(preA);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(preB);
 
-    const aRows = getRecentLedger(DISCORD_A, 10);
+    const aRows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(aRows[0]?.reason).toBe("bet-refund");
     expect(aRows[0]?.delta).toBe(30);
-    const bRows = getRecentLedger(DISCORD_B, 10);
+    const bRows = getRecentLedger(DISCORD_B, GUILD, 10);
     expect(bRows[0]?.reason).toBe("bet-refund");
     expect(bRows[0]?.delta).toBe(40);
   });
@@ -322,12 +324,12 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
 
 describe("wagers — placeWager + getWagersForBet", () => {
   test("placeWager deducts balance + inserts wager + ledger row atomically", () => {
-    adjustBalance(DISCORD_A, 20, "seed"); // balance = STARTING_BALANCE + 20
-    const before = getBalance(DISCORD_A);
+    adjustBalance(DISCORD_A, GUILD, 20, "seed"); // balance = STARTING_BALANCE + 20
+    const before = getBalance(DISCORD_A, GUILD);
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
     placeWager(id, DISCORD_A, "yes", 7);
 
-    expect(getBalance(DISCORD_A)).toBe(before - 7);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(before - 7);
     const ws = getWagersForBet(id);
     expect(ws).toHaveLength(1);
     expect(ws[0]).toMatchObject({
@@ -336,7 +338,7 @@ describe("wagers — placeWager + getWagersForBet", () => {
       outcome: "yes",
       amount: 7,
     });
-    const rows = getRecentLedger(DISCORD_A, 10);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(rows[0]?.reason).toBe("bet-placed");
     expect(rows[0]?.delta).toBe(-7);
     expect(rows[0]?.ref).toBe(String(id));
@@ -349,7 +351,7 @@ describe("wagers — placeWager + getWagersForBet", () => {
   });
 
   test("rejects closed bet", () => {
-    adjustBalance(DISCORD_A, 20, "seed");
+    adjustBalance(DISCORD_A, GUILD, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
     placeWager(id, DISCORD_A, "yes", 1);
     resolveBet(id, "yes");
@@ -357,7 +359,7 @@ describe("wagers — placeWager + getWagersForBet", () => {
   });
 
   test("rejects double-wager by same discordId on same bet", () => {
-    adjustBalance(DISCORD_A, 20, "seed");
+    adjustBalance(DISCORD_A, GUILD, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
     placeWager(id, DISCORD_A, "yes", 3);
     expect(() => placeWager(id, DISCORD_A, "no", 2)).toThrow(/already wagered/);
@@ -370,14 +372,14 @@ describe("wagers — placeWager + getWagersForBet", () => {
     // Ensure nothing was persisted — the rollback should leave no wager
     // and no bet-placed ledger row behind.
     expect(getWagersForBet(id)).toHaveLength(0);
-    const rows = getRecentLedger(DISCORD_A, 10);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 10);
     expect(rows.some((r) => r.reason === "bet-placed")).toBe(false);
   });
 
   test("getWagersForBet returns all wagers on the bet", () => {
-    adjustBalance(DISCORD_A, 20, "seed");
-    adjustBalance(DISCORD_B, 20, "seed");
-    adjustBalance(DISCORD_C, 20, "seed");
+    adjustBalance(DISCORD_A, GUILD, 20, "seed");
+    adjustBalance(DISCORD_B, GUILD, 20, "seed");
+    adjustBalance(DISCORD_C, GUILD, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
     placeWager(id, DISCORD_A, "yes", 1);
     placeWager(id, DISCORD_B, "no", 2);
@@ -392,12 +394,12 @@ describe("wagers — placeWager + getWagersForBet", () => {
 
 describe("leaderboard — getCurrentStandings + getAllTimeWins", () => {
   test("getCurrentStandings sorts by balance desc, limits to N", () => {
-    adjustBalance(DISCORD_A, 10, "seed"); // STARTING + 10
-    adjustBalance(DISCORD_B, 50, "seed"); // STARTING + 50
-    adjustBalance(DISCORD_C, 30, "seed"); // STARTING + 30
-    adjustBalance(DISCORD_D, 20, "seed"); // STARTING + 20
+    adjustBalance(DISCORD_A, GUILD, 10, "seed"); // STARTING + 10
+    adjustBalance(DISCORD_B, GUILD, 50, "seed"); // STARTING + 50
+    adjustBalance(DISCORD_C, GUILD, 30, "seed"); // STARTING + 30
+    adjustBalance(DISCORD_D, GUILD, 20, "seed"); // STARTING + 20
 
-    const top2 = getCurrentStandings(2);
+    const top2 = getCurrentStandings(GUILD, 2);
     expect(top2).toHaveLength(2);
     expect(top2[0]?.discordId).toBe(DISCORD_B);
     expect(top2[1]?.discordId).toBe(DISCORD_C);
@@ -407,17 +409,53 @@ describe("leaderboard — getCurrentStandings + getAllTimeWins", () => {
   test("getAllTimeWins counts rank=1 rows per discordId, desc by count", () => {
     db.insert(weeklyWins)
       .values([
-        { weekEnding: "2026-01-05", discordId: DISCORD_A, rank: 1, balanceSnapshot: 100 },
-        { weekEnding: "2026-01-05", discordId: DISCORD_B, rank: 2, balanceSnapshot: 90 },
-        { weekEnding: "2026-01-12", discordId: DISCORD_A, rank: 1, balanceSnapshot: 80 },
-        { weekEnding: "2026-01-12", discordId: DISCORD_C, rank: 2, balanceSnapshot: 70 },
-        { weekEnding: "2026-01-19", discordId: DISCORD_B, rank: 1, balanceSnapshot: 60 },
-        { weekEnding: "2026-01-19", discordId: DISCORD_A, rank: 1, balanceSnapshot: 55 },
+        {
+          weekEnding: "2026-01-05",
+          guildId: GUILD,
+          discordId: DISCORD_A,
+          rank: 1,
+          balanceSnapshot: 100,
+        },
+        {
+          weekEnding: "2026-01-05",
+          guildId: GUILD,
+          discordId: DISCORD_B,
+          rank: 2,
+          balanceSnapshot: 90,
+        },
+        {
+          weekEnding: "2026-01-12",
+          guildId: GUILD,
+          discordId: DISCORD_A,
+          rank: 1,
+          balanceSnapshot: 80,
+        },
+        {
+          weekEnding: "2026-01-12",
+          guildId: GUILD,
+          discordId: DISCORD_C,
+          rank: 2,
+          balanceSnapshot: 70,
+        },
+        {
+          weekEnding: "2026-01-19",
+          guildId: GUILD,
+          discordId: DISCORD_B,
+          rank: 1,
+          balanceSnapshot: 60,
+        },
+        {
+          weekEnding: "2026-01-19",
+          guildId: GUILD,
+          discordId: DISCORD_A,
+          rank: 1,
+          balanceSnapshot: 55,
+        },
       ])
       .run();
     // Note: the 2026-01-19 row for DISCORD_A is also rank=1 — two winners
     // same week is not realistic, but the tally is just COUNT(rank=1).
-    const rows = getAllTimeWins(10);
+    const rows = getAllTimeWins(GUILD, 10);
     // DISCORD_A has 3 rank=1 rows, DISCORD_B has 1.
     expect(rows[0]).toEqual({ discordId: DISCORD_A, weeksWon: 3 });
     expect(rows[1]).toEqual({ discordId: DISCORD_B, weeksWon: 1 });

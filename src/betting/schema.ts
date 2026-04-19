@@ -10,16 +10,24 @@ import {
 
 const now = sql`(datetime('now'))`;
 
-// One wallet per Discord account. Balances are integer credits (no
-// decimals) to keep payouts exact and avoid floating-point drift.
+// One wallet per (Discord account, guild). Balances are integer credits
+// (no decimals) to keep payouts exact and avoid floating-point drift.
 // Betting is a Discord-facing feature, so identity is Discord's — the
 // CS listener translates steam_id → discord_id via linked_accounts
 // before calling in.
-export const accounts = sqliteTable("accounts", {
-  discordId: text("discord_id").primaryKey(),
-  balance: integer("balance").notNull(),
-  createdAt: text("created_at").notNull().default(now),
-});
+export const accounts = sqliteTable(
+  "accounts",
+  {
+    discordId: text("discord_id").notNull(),
+    guildId: text("guild_id").notNull(),
+    balance: integer("balance").notNull(),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    primaryKey({ columns: [t.discordId, t.guildId] }),
+    index("idx_accounts_guild").on(t.guildId),
+  ],
+);
 
 // A market is always binary yes/no for v1. `guild_id` scopes
 // `/market list` so servers can't see each other's pots.
@@ -93,20 +101,21 @@ export const wagers = sqliteTable(
   ],
 );
 
-// Weekly-reset leaderboard archive. One row per (week, placer) — rank
-// is 1-indexed, balance_snapshot is the balance right before the reset
-// wiped everything back to STARTING_BALANCE. `weeks_won` per player is
-// derived from COUNT(*) WHERE rank=1, no separate counter column.
+// Weekly-reset leaderboard archive. One row per (week, guild, placer) —
+// rank is 1-indexed, balance_snapshot is the balance right before the
+// reset wiped everything back to STARTING_BALANCE. `weeks_won` per
+// player is derived from COUNT(*) WHERE rank=1, no separate counter.
 export const weeklyWins = sqliteTable(
   "weekly_wins",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     weekEnding: text("week_ending").notNull(),
+    guildId: text("guild_id").notNull(),
     discordId: text("discord_id").notNull(),
     rank: integer("rank").notNull(),
     balanceSnapshot: integer("balance_snapshot").notNull(),
   },
-  (t) => [index("idx_weekly_wins_week").on(t.weekEnding)],
+  (t) => [index("idx_weekly_wins_week").on(t.weekEnding, t.guildId)],
 );
 
 // A dispute challenges a resolved market. Opening one costs
@@ -185,6 +194,7 @@ export const ledger = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     discordId: text("discord_id").notNull(),
+    guildId: text("guild_id").notNull(),
     delta: integer("delta").notNull(),
     // 'starting-grant' | 'match' | 'bet-placed' | 'bet-payout' | 'bet-refund'
     reason: text("reason").notNull(),
@@ -192,5 +202,8 @@ export const ledger = sqliteTable(
     ref: text("ref"),
     at: text("at").notNull().default(now),
   },
-  (t) => [index("idx_ledger_discord_at").on(t.discordId, t.at)],
+  (t) => [
+    index("idx_ledger_discord_at").on(t.discordId, t.at),
+    index("idx_ledger_guild_discord").on(t.guildId, t.discordId),
+  ],
 );
