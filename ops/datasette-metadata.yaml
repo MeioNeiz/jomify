@@ -1,0 +1,108 @@
+# Datasette canned queries for the Jomify DB. Loaded via
+# `--metadata /home/opc/jomify/ops/datasette-metadata.yaml` on the
+# systemd unit. Edit, commit, then `sudo systemctl restart datasette-jomify`
+# on prod to pick up changes.
+
+title: Jomify
+description: Read-only view of the Jomify Discord bot database.
+
+databases:
+  jomify:
+    queries:
+      recent_errors:
+        title: Recent errors
+        description: Last 50 entries from the `errors` table. Warns and errors from the bot, with stack traces and context.
+        sql: |-
+          SELECT occurred_at, source, level, message, extra
+          FROM errors
+          ORDER BY id DESC
+          LIMIT 50
+
+      api_slowness:
+        title: API slowness (last 24h)
+        description: Per-endpoint Leetify latency. `flakes` counts 429/502/503 responses.
+        sql: |-
+          SELECT endpoint,
+                 COUNT(*) AS n,
+                 ROUND(AVG(duration_ms)) AS avg_ms,
+                 MAX(duration_ms) AS max_ms,
+                 SUM(CASE WHEN status IN (429, 502, 503) THEN 1 ELSE 0 END) AS flakes
+          FROM api_calls
+          WHERE occurred_at >= datetime('now', '-24 hours')
+          GROUP BY endpoint
+          ORDER BY max_ms DESC
+
+      cache_hit_rate:
+        title: Cache-hit rate per revalidate command
+        description: How often stale-while-revalidate served cached data first. Null rows are non-revalidate commands.
+        sql: |-
+          SELECT command,
+                 SUM(cache_hit) AS hits,
+                 COUNT(cache_hit) AS considered,
+                 ROUND(100.0 * SUM(cache_hit) / COUNT(cache_hit)) AS hit_pct
+          FROM metrics
+          WHERE cache_hit IS NOT NULL
+          GROUP BY command
+          ORDER BY hit_pct ASC
+
+      recent_invocations:
+        title: Recent command invocations
+        description: Last 50 slash-command runs with options (who ran /stats on whom) and full timing.
+        sql: |-
+          SELECT started_at, user_id, command, options, ttf_ms, total_ms,
+                 CASE WHEN cache_hit = 1 THEN 'hit'
+                      WHEN cache_hit = 0 THEN 'miss'
+                      ELSE '—'
+                 END AS cache,
+                 CASE WHEN success = 1 THEN 'ok' ELSE 'fail' END AS status
+          FROM metrics
+          ORDER BY id DESC
+          LIMIT 50
+
+      slowest_commands:
+        title: Slowest commands (last 7 days)
+        description: p50 and p95 of total wall clock, alongside TTF p50 so you can spot "slow overall" vs "slow to first reply".
+        sql: |-
+          WITH per_cmd AS (
+            SELECT command, total_ms, ttf_ms
+            FROM metrics
+            WHERE started_at >= datetime('now', '-7 days')
+          )
+          SELECT command,
+                 COUNT(*) AS n,
+                 ROUND(AVG(total_ms)) AS avg_total,
+                 (SELECT total_ms FROM per_cmd p2
+                  WHERE p2.command = p.command
+                  ORDER BY total_ms
+                  LIMIT 1 OFFSET CAST((COUNT(*) - 1) * 0.95 AS INTEGER)
+                 ) AS p95_total,
+                 ROUND(AVG(ttf_ms)) AS avg_ttf
+          FROM per_cmd p
+          GROUP BY command
+          ORDER BY p95_total DESC
+
+      heavy_users:
+        title: Heavy users (last 7 days)
+        description: Most active Discord users by command count, plus their most-used command.
+        sql: |-
+          SELECT user_id,
+                 COUNT(*) AS total_calls,
+                 SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures
+          FROM metrics
+          WHERE started_at >= datetime('now', '-7 days')
+            AND user_id IS NOT NULL
+          GROUP BY user_id
+          ORDER BY total_calls DESC
+
+      errors_by_source:
+        title: Errors grouped by source
+        description: Which subsystems are erroring most. Drill in with `recent_errors` filtered by source.
+        sql: |-
+          SELECT source, level,
+                 COUNT(*) AS n,
+                 MIN(occurred_at) AS first_seen,
+                 MAX(occurred_at) AS last_seen
+          FROM errors
+          WHERE occurred_at >= datetime('now', '-7 days')
+          GROUP BY source, level
+          ORDER BY n DESC
