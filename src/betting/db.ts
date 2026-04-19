@@ -168,6 +168,20 @@ sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_weekly_wins_week
     ON weekly_wins (week_ending)
 `);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS admin_actions (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    at       TEXT NOT NULL DEFAULT (datetime('now')),
+    admin_id TEXT NOT NULL,
+    action   TEXT NOT NULL,
+    target   TEXT NOT NULL,
+    details  TEXT NOT NULL
+  )
+`);
+sqlite.run(`CREATE INDEX IF NOT EXISTS idx_admin_actions_at ON admin_actions (at)`);
+sqlite.run(
+  `CREATE INDEX IF NOT EXISTS idx_admin_actions_admin ON admin_actions (admin_id)`,
+);
 
 function hasColumn(sql: Database, table: string, column: string): boolean {
   const rows = sql.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();

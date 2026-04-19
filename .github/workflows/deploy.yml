@@ -26,3 +26,4 @@ jobs:
             # every deploy even when command data hasn't changed.
             ~/.bun/bin/bun run register
             sudo systemctl restart jomify
+            sudo systemctl restart jomify-admin || true

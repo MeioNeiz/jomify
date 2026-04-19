@@ -14,8 +14,10 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
   },
-  "include": ["src/**/*", "scripts/**/*", "tests/**/*"],
+  "include": ["src/**/*", "scripts/**/*", "tests/**/*", "admin/**/*"],
   "exclude": ["node_modules", "dist"]
 }

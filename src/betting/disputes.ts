@@ -70,7 +70,7 @@ function adminActionMenu(disputeId: number): StringSelectMenuBuilder {
     );
 }
 
-function renderDisputeView(disputeId: number): MessageEditOptions {
+export function renderDisputeView(disputeId: number): MessageEditOptions {
   const d = getDispute(disputeId);
   if (!d) return { content: `Dispute #${disputeId} doesn't exist.`, components: [] };
   const bet = getBet(d.betId);
