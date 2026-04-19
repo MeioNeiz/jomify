@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
-import db from "../db.js";
-import { leetifyUnknown } from "../schema.js";
+import db from "../../db.js";
+import { leetifyUnknown } from "../../schema.js";
 
 // Users not on Leetify stay marked for this long before we try again
 // (in case they sign up).

@@ -2,17 +2,17 @@ import type {
   ChatInputCommandInteraction,
   InteractionEditReplyOptions,
 } from "discord.js";
+import { LeetifyUnavailableError } from "../cs/leetify/client.js";
+import type { LeetifyProfile } from "../cs/leetify/types.js";
+import { getSteamId } from "../cs/store.js";
 import { logError } from "../errors.js";
 import { fetchGuildProfiles } from "../helpers.js";
-import { LeetifyUnavailableError } from "../leetify/client.js";
-import type { LeetifyProfile } from "../leetify/types.js";
 import {
   markCacheHit,
   markFirstReply,
   markLastReply,
   runWithMetrics,
 } from "../metrics.js";
-import { getSteamId } from "../store.js";
 
 type CommandFn = (interaction: ChatInputCommandInteraction) => Promise<void>;
 

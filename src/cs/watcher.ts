@@ -1,4 +1,8 @@
 import { type Client, EmbedBuilder } from "discord.js";
+import { config } from "../config.js";
+import { logError } from "../errors.js";
+import { emit } from "../events.js";
+import log from "../logger.js";
 import {
   checkBigMatch,
   checkStreakAlerts,
@@ -6,8 +10,6 @@ import {
   scanOpponents,
   sendToGuilds,
 } from "./alerts.js";
-import { config } from "./config.js";
-import { logError } from "./errors.js";
 import {
   getMatchDetails,
   getMatchHistory,
@@ -16,9 +18,9 @@ import {
   LeetifyUnavailableError,
 } from "./leetify/client.js";
 import type { LeetifyMatchDetails, LeetifyProfile } from "./leetify/types.js";
-import log from "./logger.js";
 import {
   getAllTrackedSteamIds,
+  getDiscordId,
   getPlayerStatAverages,
   getStoredMatchCount,
   hasMatchStats,
@@ -34,6 +36,19 @@ const BAD_GAME_RATING = -0.05;
 const GREAT_GAME_RATING = 0.08;
 
 const lastKnownPremier = new Map<string, number>();
+
+// Steam IDs of other tracked players on the same team as `self` in this
+// match. Used by the cs:match-completed event to feed betting's squad
+// multiplier without coupling the watcher to betting's rules.
+function trackedTeammatesFrom(details: LeetifyMatchDetails, self: string): string[] {
+  const selfStats = details.stats.find((s) => s.steam64_id === self);
+  if (!selfStats) return [];
+  const tracked = new Set(getAllTrackedSteamIds());
+  return details.stats
+    .filter((s) => s.initial_team_number === selfStats.initial_team_number)
+    .map((s) => s.steam64_id)
+    .filter((id) => id !== self && tracked.has(id));
+}
 
 // Bulk load all match history for a new player.
 //
@@ -212,16 +227,55 @@ async function checkPlayer(client: Client, steamId: string) {
       }
     }
 
-    // Win/loss streak tracking
+    // Win/loss streak tracking — also captured for the event payload
+    // below so downstream subscribers (betting) can penalise losing
+    // streaks without re-querying the streaks table.
     const outcome = match.outcome as "win" | "loss" | "tie";
-    if (outcome === "win" || outcome === "loss" || outcome === "tie") {
+    const knownOutcome = outcome === "win" || outcome === "loss" || outcome === "tie";
+    let streakType: "win" | "loss" | "tie" = "tie";
+    let streakCount = 0;
+    if (knownOutcome) {
       const streak = updatePlayerStreak(steamId, outcome);
+      streakType = streak.streakType as "win" | "loss" | "tie";
+      streakCount = streak.streakCount;
       await checkStreakAlerts(client, steamId, player, streak);
     }
 
     // Auto-scan opponents for sus players
     if (details) {
       await scanOpponents(client, steamId, details);
+    }
+
+    // Fan-out to non-CS subscribers (e.g. betting). Gated by the same
+    // alertsSent guard above, so it fires at most once per (matchId,
+    // steamId). Teammates list is empty when the details fetch failed
+    // this cycle — subscribers must tolerate that.
+    if (knownOutcome) {
+      const selfStats = details?.stats.find((s) => s.steam64_id === steamId) ?? null;
+      emit("cs:match-completed", {
+        matchId: match.id,
+        steamId,
+        discordId: getDiscordId(steamId),
+        rating: match.leetify_rating,
+        outcome,
+        premierDelta:
+          currentPremier != null && prevPremier != null
+            ? currentPremier - prevPremier
+            : null,
+        trackedTeammates: details ? trackedTeammatesFrom(details, steamId) : [],
+        mapName: match.map_name,
+        finishedAt: match.finished_at,
+        stats: selfStats
+          ? {
+              flashbangHitFriend: selfStats.flashbang_hit_friend,
+              heFriendsDamageAvg: selfStats.he_friends_damage_avg,
+              shotsHitFriend: selfStats.shots_hit_friend,
+              shotsHitFriendHead: selfStats.shots_hit_friend_head,
+              streakType,
+              streakCount,
+            }
+          : null,
+      });
     }
   }
 }

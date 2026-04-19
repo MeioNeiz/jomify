@@ -15,12 +15,12 @@ import {
   getMatchDetails,
   getMatchHistory,
   LeetifyNotFoundError,
-} from "../src/leetify/client.js";
+} from "../src/cs/leetify/client.js";
 import {
   getAllTrackedSteamIds,
   isLeetifyUnknown,
   saveMatchDetails,
-} from "../src/store.js";
+} from "../src/cs/store.js";
 
 const MIN_GAP_MS = 200;
 const DB = join(import.meta.dir, "..", "jomify.db");

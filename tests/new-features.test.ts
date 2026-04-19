@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sqlite as db } from "../src/db.js";
-import type { LeetifyMatchDetails } from "../src/leetify/types.js";
+import type { LeetifyMatchDetails } from "../src/cs/leetify/types.js";
 import {
-  getAllGuildIds,
   getApiUsageToday,
   getBestMatch,
   getHeadToHead,
@@ -24,10 +22,11 @@ import {
   markOpponentAnalysed,
   markStreakAlerted,
   saveMatchDetails,
-  setNotifyChannel,
   trackApiCall,
   updatePlayerStreak,
-} from "../src/store.js";
+} from "../src/cs/store.js";
+import { sqlite as db } from "../src/db.js";
+import { getAllGuildIds, setNotifyChannel } from "../src/store.js";
 
 const GUILD = "test-guild";
 const STEAM1 = "76561198000000001";
@@ -580,7 +579,7 @@ describe("getPlayerHistory", () => {
 
 // ── Analyse logic ──
 
-import { analyseStats } from "../src/analyse.js";
+import { analyseStats } from "../src/cs/analyse.js";
 
 describe("analyse z-scores", () => {
   test("normal stats produce clean verdict", () => {
@@ -623,7 +622,7 @@ describe("analyse z-scores", () => {
 
 // ── Carry ──
 
-import { getCarryStats, getTeamCarryStats } from "../src/store.js";
+import { getCarryStats, getTeamCarryStats } from "../src/cs/store.js";
 
 function makeCarryMatch(
   id: string,
@@ -951,7 +950,7 @@ describe("getBestMatch", () => {
 
 // ── /suspects ──
 
-import { getEncounters } from "../src/store.js";
+import { getEncounters } from "../src/cs/store.js";
 
 describe("getEncounters", () => {
   const TARGET = "76561198000000100";

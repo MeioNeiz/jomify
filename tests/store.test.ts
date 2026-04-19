@@ -1,15 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-
-// Use in-memory DB for tests
-import { sqlite as db } from "../src/db.js";
-
 import {
   addTrackedPlayer,
   clearLeetifyUnknown,
   getDiscordId,
   getLastLeaderboard,
   getLeaderboardBefore,
-  getNotifyChannel,
   getSteamId,
   getTrackedPlayers,
   isLeetifyUnknown,
@@ -19,8 +14,10 @@ import {
   markMatchProcessed,
   removeTrackedPlayer,
   saveLeaderboardSnapshot,
-  setNotifyChannel,
-} from "../src/store.js";
+} from "../src/cs/store.js";
+// Use in-memory DB for tests
+import { sqlite as db } from "../src/db.js";
+import { getNotifyChannel, setNotifyChannel } from "../src/store.js";
 
 const GUILD = "test-guild";
 const STEAM = "76561198000000001";

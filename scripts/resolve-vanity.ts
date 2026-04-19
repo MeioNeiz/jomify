@@ -12,7 +12,7 @@
 // Usage: bun scripts/resolve-vanity.ts [--dry]
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { resolveSteamId } from "../src/steam/client.js";
+import { resolveSteamId } from "../src/cs/steam/client.js";
 
 const DRY = process.argv.includes("--dry");
 const DB = join(import.meta.dir, "..", "jomify.db");

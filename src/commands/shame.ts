@@ -1,4 +1,7 @@
 import { SlashCommandBuilder } from "discord.js";
+import type { LeetifyPlayerStats } from "../cs/leetify/types.js";
+import { refreshPlayers } from "../cs/refresh.js";
+import { getMostRecentMatchTime, getRecentMatchesSince } from "../cs/store.js";
 import {
   fmt,
   freshnessSuffix,
@@ -6,9 +9,6 @@ import {
   outcomeTag,
   requireTrackedGuild,
 } from "../helpers.js";
-import type { LeetifyPlayerStats } from "../leetify/types.js";
-import { refreshPlayers } from "../refresh.js";
-import { getMostRecentMatchTime, getRecentMatchesSince } from "../store.js";
 import { embed, rankPrefix } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 

@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import db, { sqlite } from "../db.js";
+import db, { sqlite } from "../../db.js";
+import { matches, matchStats, processedMatches } from "../../schema.js";
 import type { LeetifyMatchDetails, LeetifyPlayerStats } from "../leetify/types.js";
-import { matches, matchStats, processedMatches } from "../schema.js";
 
 export function isMatchProcessed(matchId: string, steamId: string): boolean {
   const row = db

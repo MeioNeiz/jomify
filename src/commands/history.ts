@@ -6,9 +6,9 @@ import {
   SlashCommandBuilder,
 } from "discord.js";
 import { registerComponent } from "../components.js";
+import { refreshPlayers } from "../cs/refresh.js";
+import { getPlayerHistory, getStoredMatchCount, type HistoryRow } from "../cs/store.js";
 import { freshnessSuffix, outcomeTag } from "../helpers.js";
-import { refreshPlayers } from "../refresh.js";
-import { getPlayerHistory, getStoredMatchCount, type HistoryRow } from "../store.js";
 import { embed, pad, table } from "../ui.js";
 import { requireLinkedUser, respondWithRevalidate, wrapCommand } from "./handler.js";
 

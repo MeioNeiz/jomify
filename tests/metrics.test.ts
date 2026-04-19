@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { trackApiCall } from "../src/cs/store.js";
 import { sqlite as db } from "../src/db.js";
 import {
   bumpApiCall,
@@ -6,7 +7,7 @@ import {
   markLastReply,
   runWithMetrics,
 } from "../src/metrics.js";
-import { getCommandStats, saveMetric, trackApiCall } from "../src/store.js";
+import { getCommandStats, saveMetric } from "../src/store.js";
 
 beforeEach(() => {
   db.run("DELETE FROM metrics");

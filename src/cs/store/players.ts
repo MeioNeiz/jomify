@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
-import db from "../db.js";
-import { trackedPlayers } from "../schema.js";
+import db from "../../db.js";
+import { trackedPlayers } from "../../schema.js";
 import { assertSteam64 } from "./validate.js";
 
 export function getTrackedPlayers(guildId: string): string[] {

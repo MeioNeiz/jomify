@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fetchInventorySummary, type InventoryItem } from "../inventory.js";
+import { fetchInventorySummary, type InventoryItem } from "../cs/inventory.js";
 import { embed } from "../ui.js";
 import { requireLinkedUser, wrapCommand } from "./handler.js";
 

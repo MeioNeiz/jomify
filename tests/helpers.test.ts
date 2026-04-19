@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { ChatInputCommandInteraction } from "discord.js";
+import { getProfile } from "../src/cs/leetify/client.js";
 import { fmt, freshnessSuffix, requireGuild } from "../src/helpers.js";
-import { getProfile } from "../src/leetify/client.js";
 import { COLOURS } from "../src/ui.js";
 
 process.env.LEETIFY_API_KEY ??= "test-key";
