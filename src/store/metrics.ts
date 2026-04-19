@@ -10,6 +10,7 @@ export type MetricRow = {
   totalMs: number;
   apiCalls: string | null;
   options: string | null;
+  cacheHit: number | null;
   success: number;
   errorMessage: string | null;
   userId: string | null;
@@ -26,6 +27,7 @@ export function saveMetric(row: MetricRow): void {
       totalMs: row.totalMs,
       apiCalls: row.apiCalls,
       options: row.options,
+      cacheHit: row.cacheHit,
       success: row.success,
       errorMessage: row.errorMessage,
       userId: row.userId,

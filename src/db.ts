@@ -229,14 +229,53 @@ sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_metrics_command_started
     ON metrics (command, started_at)
 `);
-// Post-install: `options` was added after initial rollout, catch up
-// existing DBs that predate it. Safe to run every start; the try
-// block is the usual "column already exists" swallow.
-try {
-  sqlite.run(`ALTER TABLE metrics ADD COLUMN options TEXT`);
-} catch {
-  /* already exists */
+// Post-install migrations for columns added after initial rollout.
+// Safe to run every start; each try swallows the usual "column already
+// exists" error from SQLite.
+for (const col of [
+  "ALTER TABLE metrics ADD COLUMN options TEXT",
+  "ALTER TABLE metrics ADD COLUMN cache_hit INTEGER",
+]) {
+  try {
+    sqlite.run(col);
+  } catch {
+    /* already exists */
+  }
 }
+
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS errors (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at TEXT NOT NULL DEFAULT (datetime('now')),
+    source      TEXT NOT NULL,
+    level       TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    stack       TEXT,
+    extra       TEXT
+  )
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_errors_occurred
+    ON errors (occurred_at)
+`);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS api_calls (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    endpoint     TEXT NOT NULL,
+    duration_ms  INTEGER NOT NULL,
+    status       INTEGER,
+    retry_count  INTEGER NOT NULL DEFAULT 0
+  )
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_api_calls_occurred
+    ON api_calls (occurred_at)
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_api_calls_endpoint
+    ON api_calls (endpoint, occurred_at)
+`);
 
 const db = drizzle(sqlite, { schema });
 

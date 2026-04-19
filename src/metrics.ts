@@ -18,6 +18,12 @@ export type Collector = {
   apiCalls: Record<string, number>;
   firstReplyAt: number | null;
   lastReplyAt: number | null;
+  /**
+   * null = command isn't revalidate-backed
+   * true = fetchCached returned data and we showed it first
+   * false = no cached data; user saw the fresh render only
+   */
+  cacheHit: boolean | null;
 };
 
 const storage = new AsyncLocalStorage<Collector>();
@@ -43,6 +49,18 @@ export function markLastReply(): void {
   c.lastReplyAt = Date.now();
 }
 
+/**
+ * Called by respondWithRevalidate. Pass `true` when fetchCached
+ * returned data (we showed cached first), `false` when we had to
+ * wait for fresh. Non-revalidate commands never call this, so the
+ * metric stays null.
+ */
+export function markCacheHit(hit: boolean): void {
+  const c = storage.getStore();
+  if (!c) return;
+  c.cacheHit = hit;
+}
+
 export async function runWithMetrics<T>(
   opts: { command: string; userId?: string; guildId?: string; options?: string },
   fn: () => Promise<T>,
@@ -57,6 +75,7 @@ export async function runWithMetrics<T>(
     apiCalls: {},
     firstReplyAt: null,
     lastReplyAt: null,
+    cacheHit: null,
   };
 
   try {
@@ -92,6 +111,7 @@ function persist(
       totalMs,
       apiCalls: apiCallsJson,
       options: c.options ?? null,
+      cacheHit: c.cacheHit == null ? null : c.cacheHit ? 1 : 0,
       success: outcome.success ? 1 : 0,
       errorMessage: outcome.errorMessage ?? null,
       userId: c.userId ?? null,

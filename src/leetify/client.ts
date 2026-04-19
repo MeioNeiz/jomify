@@ -1,9 +1,11 @@
 import type { ZodType } from "zod";
 import { config } from "../config.js";
+import { logError } from "../errors.js";
 import log from "../logger.js";
 import {
   clearLeetifyUnknown,
   markLeetifyUnknown,
+  saveApiCall,
   saveSnapshots,
   trackApiCall,
 } from "../store.js";
@@ -83,48 +85,76 @@ async function leetifyFetch<T>(path: string, schema: ZodType): Promise<T> {
   if (circuitOpen) throw new LeetifyUnavailableError();
 
   const endpoint = path.split("?")[0];
-  // Count once per logical call, not per retry — the api_usage table
-  // is meant to reflect how chatty we are with Leetify, not how
-  // many retries an outage forces us into.
   trackApiCall(`leetify:${endpoint}`);
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { Authorization: `Bearer ${config.leetifyApiKey}` },
-    });
+  const startedMs = Date.now();
+  let finalStatus: number | null = null;
+  let retries = 0;
 
-    const retryable = res.status === 429 || res.status === 502 || res.status === 503;
-    if (retryable && attempt < MAX_RETRIES) {
-      const after = res.headers.get("Retry-After");
-      const wait = after ? Number(after) * 1000 : 2000 * (attempt + 1);
-      log.debug({ status: res.status, endpoint, attempt }, "Leetify retrying");
-      await new Promise((r) => setTimeout(r, wait));
-      continue;
+  try {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const res = await fetch(`${BASE_URL}${path}`, {
+        headers: { Authorization: `Bearer ${config.leetifyApiKey}` },
+      });
+      finalStatus = res.status;
+
+      const retryable = res.status === 429 || res.status === 502 || res.status === 503;
+      if (retryable && attempt < MAX_RETRIES) {
+        retries++;
+        const after = res.headers.get("Retry-After");
+        const wait = after ? Number(after) * 1000 : 2000 * (attempt + 1);
+        log.debug({ status: res.status, endpoint, attempt }, "Leetify retrying");
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+
+      if (!res.ok) {
+        if (retryable) tripCircuit();
+        // 404 = player has no Leetify profile; persistent, expected;
+        // kept at debug to avoid spamming the error table.
+        if (res.status !== 404) {
+          logError(
+            "leetify:fetch",
+            new Error(`Leetify API error: ${res.status} ${res.statusText}`),
+            { endpoint, status: res.status, attempts: attempt + 1 },
+            "warn",
+          );
+        } else {
+          log.debug(
+            { status: res.status, endpoint, attempts: attempt + 1 },
+            "Leetify API error",
+          );
+        }
+        throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
+      }
+
+      const json = await res.json();
+      const parsed = schema.safeParse(json);
+      if (!parsed.success) {
+        logError(
+          "leetify:fetch",
+          new Error(`Leetify API: invalid response shape from ${endpoint}`),
+          { endpoint, issues: parsed.error.issues.slice(0, 5) },
+          "warn",
+        );
+        throw new Error(`Leetify API: invalid response shape from ${endpoint}`);
+      }
+      return parsed.data as T;
     }
 
-    if (!res.ok) {
-      if (retryable) tripCircuit();
-      // 404s are persistent (user has no Leetify profile); callers mark
-      // them and stop polling, so warn-level would be noise.
-      const meta = { status: res.status, endpoint, attempts: attempt + 1 };
-      if (res.status === 404) log.debug(meta, "Leetify API error");
-      else log.warn(meta, "Leetify API error");
-      throw new Error(`Leetify API error: ${res.status} ${res.statusText}`);
+    tripCircuit();
+    throw new Error("Leetify API: max retries exceeded");
+  } finally {
+    try {
+      saveApiCall({
+        endpoint: `leetify:${endpoint}`,
+        durationMs: Date.now() - startedMs,
+        status: finalStatus,
+        retryCount: retries,
+      });
+    } catch {
+      /* best-effort; never block the caller on metrics write */
     }
-
-    const json = await res.json();
-    const parsed = schema.safeParse(json);
-    if (!parsed.success) {
-      log.warn(
-        { endpoint, issues: parsed.error.issues.slice(0, 5) },
-        "Leetify response failed schema validation",
-      );
-      throw new Error(`Leetify API: invalid response shape from ${endpoint}`);
-    }
-    return parsed.data as T;
   }
-
-  tripCircuit();
-  throw new Error("Leetify API: max retries exceeded");
 }
 
 function is404(err: unknown): boolean {
