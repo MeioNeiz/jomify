@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import db from "../db.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
 
@@ -14,16 +14,20 @@ export type Bet = {
   winningOutcome: Outcome | null;
   createdAt: string;
   resolvedAt: string | null;
+  expiresAt: string | null;
+  channelId: string | null;
+  messageId: string | null;
 };
 
 export function createBet(
   guildId: string,
   creatorDiscordId: string,
   question: string,
+  expiresAt: string | null = null,
 ): number {
   const row = db
     .insert(bets)
-    .values({ guildId, question, creatorDiscordId, status: "open" })
+    .values({ guildId, question, creatorDiscordId, status: "open", expiresAt })
     .returning({ id: bets.id })
     .get();
   return row.id;
@@ -41,6 +45,9 @@ export function getBet(id: number): Bet | null {
     winningOutcome: (row.winningOutcome as Outcome | null) ?? null,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
+    expiresAt: row.expiresAt,
+    channelId: row.channelId,
+    messageId: row.messageId,
   };
 }
 
@@ -61,7 +68,46 @@ export function listOpenBets(guildId: string): Bet[] {
     winningOutcome: (row.winningOutcome as Outcome | null) ?? null,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
+    expiresAt: row.expiresAt,
+    channelId: row.channelId,
+    messageId: row.messageId,
   }));
+}
+
+/**
+ * Persist the Discord message that hosts the interactive market view.
+ * Called right after the initial post so the expiry watcher can edit
+ * the same message when the market auto-cancels.
+ */
+export function setBetMessage(betId: number, channelId: string, messageId: string): void {
+  db.update(bets).set({ channelId, messageId }).where(eq(bets.id, betId)).run();
+}
+
+/**
+ * Open markets whose expires_at has passed. Used by the expiry watcher
+ * to drive auto-cancel. Returns the message pointer so the watcher can
+ * re-render the original post after cancelling.
+ */
+export function getExpiredOpenBets(): Array<{
+  id: number;
+  channelId: string | null;
+  messageId: string | null;
+}> {
+  return db
+    .select({
+      id: bets.id,
+      channelId: bets.channelId,
+      messageId: bets.messageId,
+    })
+    .from(bets)
+    .where(
+      and(
+        eq(bets.status, "open"),
+        isNotNull(bets.expiresAt),
+        sql`${bets.expiresAt} <= datetime('now')`,
+      ),
+    )
+    .all();
 }
 
 /**
@@ -148,6 +194,46 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
         winningOutcome,
         resolvedAt: sql`(datetime('now'))`,
       })
+      .where(eq(bets.id, betId))
+      .run();
+  });
+}
+
+/**
+ * Refund every wager and mark the market cancelled. Idempotent — a
+ * double-cancel (e.g. the watcher racing a manual cancel) short-
+ * circuits without touching balances. Called by the expiry watcher
+ * when a market's deadline passes without a resolution.
+ */
+export function cancelBet(betId: number): void {
+  db.transaction((tx) => {
+    const bet = tx.select().from(bets).where(eq(bets.id, betId)).get();
+    if (!bet) throw new Error(`Bet ${betId} does not exist`);
+    if (bet.status !== "open") return;
+
+    const rows = tx.select().from(wagers).where(eq(wagers.betId, betId)).all();
+    for (const w of rows) {
+      const acct = tx
+        .select({ balance: accounts.balance })
+        .from(accounts)
+        .where(eq(accounts.discordId, w.discordId))
+        .get();
+      const current = acct?.balance ?? 0;
+      tx.update(accounts)
+        .set({ balance: current + w.amount })
+        .where(eq(accounts.discordId, w.discordId))
+        .run();
+      tx.insert(ledger)
+        .values({
+          discordId: w.discordId,
+          delta: w.amount,
+          reason: "bet-cancel",
+          ref: String(betId),
+        })
+        .run();
+    }
+    tx.update(bets)
+      .set({ status: "cancelled", resolvedAt: sql`(datetime('now'))` })
       .where(eq(bets.id, betId))
       .run();
   });

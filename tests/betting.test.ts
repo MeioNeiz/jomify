@@ -15,12 +15,14 @@ import { computeMatchDelta } from "../src/betting/listeners/cs-match-completed.j
 import { accounts, bets, ledger, wagers, weeklyWins } from "../src/betting/schema.js";
 import {
   adjustBalance,
+  cancelBet,
   createBet,
   ensureAccount,
   getAllTimeWins,
   getBalance,
   getBet,
   getCurrentStandings,
+  getExpiredOpenBets,
   getRecentLedger,
   getWagersForBet,
   listOpenBets,
@@ -215,6 +217,48 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
     expect(bet?.status).toBe("resolved");
     expect(bet?.winningOutcome).toBe("yes");
     expect(bet?.resolvedAt).not.toBeNull();
+  });
+
+  test("cancelBet refunds every wager, marks cancelled, idempotent on re-call", () => {
+    adjustBalance(DISCORD_A, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, 95, "seed"); // 100
+    const preA = getBalance(DISCORD_A);
+    const preB = getBalance(DISCORD_B);
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Expires?");
+    placeWager(id, DISCORD_A, "yes", 12);
+    placeWager(id, DISCORD_B, "no", 7);
+    expect(getBalance(DISCORD_A)).toBe(preA - 12);
+    expect(getBalance(DISCORD_B)).toBe(preB - 7);
+
+    cancelBet(id);
+    expect(getBalance(DISCORD_A)).toBe(preA);
+    expect(getBalance(DISCORD_B)).toBe(preB);
+    expect(getBet(id)?.status).toBe("cancelled");
+    expect(getRecentLedger(DISCORD_A, 5)[0]?.reason).toBe("bet-cancel");
+
+    // Second call is a no-op — no double refund.
+    const afterOne = getBalance(DISCORD_A);
+    cancelBet(id);
+    expect(getBalance(DISCORD_A)).toBe(afterOne);
+  });
+
+  test("getExpiredOpenBets returns open bets past their expires_at only", () => {
+    const past = "2020-01-01 00:00:00";
+    const future = "2999-01-01 00:00:00";
+    const a = createBet(GUILD, CREATOR_DISCORD, "Past", past);
+    const b = createBet(GUILD, CREATOR_DISCORD, "Future", future);
+    const c = createBet(GUILD, CREATOR_DISCORD, "No expiry", null);
+    // Resolved markets, even past-expiry, must not come back.
+    const d = createBet(GUILD, CREATOR_DISCORD, "Past but resolved", past);
+    placeWager(d, DISCORD_A, "yes", 1);
+    resolveBet(d, "yes");
+
+    const ids = getExpiredOpenBets().map((r) => r.id);
+    expect(ids).toContain(a);
+    expect(ids).not.toContain(b);
+    expect(ids).not.toContain(c);
+    expect(ids).not.toContain(d);
   });
 
   test("no winners: losers refunded to pre-wager balance, bet-refund row written", () => {
