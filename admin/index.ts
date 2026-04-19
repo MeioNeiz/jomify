@@ -86,5 +86,6 @@ console.log(`Jomify Admin listening on http://localhost:${port}`);
 
 export default {
   port,
+  hostname: "0.0.0.0",
   fetch: app.fetch,
 };
