@@ -14,16 +14,12 @@ import {
 import { wrapCommand } from "../../commands/handler.js";
 import { registerComponent } from "../../components.js";
 import log from "../../logger.js";
-import { embed, pad, rankPrefix, table } from "../../ui.js";
+import { embed } from "../../ui.js";
 import {
   cancelBet,
   createBet,
-  ensureAccount,
-  getAllTimeWins,
   getBalance,
   getBet,
-  getCurrentStandings,
-  getRecentLedger,
   getWagersForBet,
   listOpenBets,
   type Outcome,
@@ -63,23 +59,6 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName("list").setDescription("Show open markets in this server"),
-  )
-  .addSubcommand((sub) =>
-    sub.setName("balance").setDescription("Show your credits and recent ledger"),
-  )
-  .addSubcommand((sub) =>
-    sub
-      .setName("leaderboard")
-      .setDescription("Credit leaderboard")
-      .addStringOption((opt) =>
-        opt
-          .setName("view")
-          .setDescription("Live balances this week, or all-time weeks won")
-          .addChoices(
-            { name: "current (this week)", value: "current" },
-            { name: "all-time (weeks won)", value: "all-time" },
-          ),
-      ),
   );
 
 // ── Market view rendering ────────────────────────────────────────────
@@ -97,7 +76,7 @@ function poolFor(betId: number): Pool {
   return { yes, no, total: yes + no };
 }
 
-function positionLines(betId: number): string[] {
+function betLines(betId: number): string[] {
   const rows = getWagersForBet(betId);
   return rows.map((w) => {
     const side = w.outcome === "yes" ? MARKET_EMOJI.yes : MARKET_EMOJI.no;
@@ -125,7 +104,7 @@ export function renderMarketView(
     return { content: `Market #${betId} doesn't exist.`, embeds: [], components: [] };
   }
   const pool = poolFor(betId);
-  const positions = positionLines(betId);
+  const bets = betLines(betId);
 
   const header = (() => {
     if (bet.status === "resolved") {
@@ -148,8 +127,8 @@ export function renderMarketView(
     desc.push(`Closes <t:${unix}:R>`);
   }
   desc.push("");
-  desc.push(`__${MARKET_COPY.positionsLabel}__`);
-  desc.push(positions.length ? positions.join("\n") : MARKET_COPY.emptyPositions);
+  desc.push(`__${MARKET_COPY.betsLabel}__`);
+  desc.push(bets.length ? bets.join("\n") : MARKET_COPY.emptyBets);
   if (bet.status === "open") desc.push("", MARKET_COPY.footerOpen);
 
   const e = embed(MARKET_EMBED_COLOUR)
@@ -160,15 +139,15 @@ export function renderMarketView(
     return { embeds: [e], components: [] };
   }
 
-  const buyRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    button(`market:wager:${bet.id}:yes`, MARKET_BUTTONS.buyYes),
-    button(`market:wager:${bet.id}:no`, MARKET_BUTTONS.buyNo),
+  const betRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    button(`market:wager:${bet.id}:yes`, MARKET_BUTTONS.betYes),
+    button(`market:wager:${bet.id}:no`, MARKET_BUTTONS.betNo),
   );
   const resolveRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     button(`market:resolve:${bet.id}:yes`, MARKET_BUTTONS.resolveYes),
     button(`market:resolve:${bet.id}:no`, MARKET_BUTTONS.resolveNo),
   );
-  return { embeds: [e], components: [buyRow, resolveRow] };
+  return { embeds: [e], components: [betRow, resolveRow] };
 }
 
 // ── Slash handlers ───────────────────────────────────────────────────
@@ -227,76 +206,19 @@ async function handleList(interaction: ChatInputCommandInteraction, guildId: str
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
   const e = embed(MARKET_EMBED_COLOUR)
     .setTitle("Open markets")
-    .setDescription(`${open.length} open. Pick one to buy in or resolve.`);
+    .setDescription(`${open.length} open. Pick one to bet on or resolve.`);
   await interaction.editReply({ embeds: [e], components: [row] });
-}
-
-async function handleBalance(interaction: ChatInputCommandInteraction) {
-  // Seed on first view so the embed always shows the starting grant
-  // instead of a confusing 0. Cheap + idempotent.
-  const discordId = interaction.user.id;
-  ensureAccount(discordId);
-  const balance = getBalance(discordId);
-  const ledgerRows = getRecentLedger(discordId, 8);
-  const rows = ledgerRows.map((r) => {
-    const sign = r.delta > 0 ? `+${r.delta}` : String(r.delta);
-    const ref = r.ref ? `#${r.ref}` : "";
-    return `${pad(r.at.slice(5, 16), 11)} ${pad(sign, 5)} ${pad(r.reason, 15)} ${ref}`;
-  });
-  const body = rows.length ? table(rows) : "_No activity yet._";
-  const e = embed(MARKET_EMBED_COLOUR)
-    .setTitle("Your balance")
-    .setDescription(`**${balance} credits**\n\n${body}`);
-  await interaction.editReply({ embeds: [e] });
-}
-
-async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
-  const view = interaction.options.getString("view") ?? "current";
-  if (view === "all-time") {
-    const rows = getAllTimeWins(10);
-    if (!rows.length) {
-      await interaction.editReply("No weeks resolved yet — check back Monday.");
-      return;
-    }
-    const lines = rows.map((r, i) => {
-      const wk = r.weeksWon === 1 ? "week" : "weeks";
-      return `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.weeksWon}** ${wk} won`;
-    });
-    const e = embed(MARKET_EMBED_COLOUR)
-      .setTitle("All-time leaderboard")
-      .setDescription(lines.join("\n"));
-    await interaction.editReply({ embeds: [e] });
-    return;
-  }
-
-  const rows = getCurrentStandings(10);
-  if (!rows.length) {
-    await interaction.editReply("No balances yet — play a match to get started.");
-    return;
-  }
-  const lines = rows.map(
-    (r, i) => `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.balance}** credits`,
-  );
-  const e = embed(MARKET_EMBED_COLOUR)
-    .setTitle("This week's standings")
-    .setDescription(
-      `${lines.join("\n")}\n-# Resets Monday 00:00 Europe/London. Top 3 get a weekly win archived.`,
-    );
-  await interaction.editReply({ embeds: [e] });
 }
 
 export const execute = wrapCommand(async (interaction) => {
   const sub = interaction.options.getSubcommand(true);
   const guildId = interaction.guildId;
-  const guildOnly = sub === "create" || sub === "list";
-  if (guildOnly && !guildId) {
+  if (!guildId) {
     await interaction.editReply("Use this in a server.");
     return;
   }
-  if (sub === "create") await handleCreate(interaction, guildId as string);
-  else if (sub === "list") await handleList(interaction, guildId as string);
-  else if (sub === "balance") await handleBalance(interaction);
-  else if (sub === "leaderboard") await handleLeaderboard(interaction);
+  if (sub === "create") await handleCreate(interaction, guildId);
+  else if (sub === "list") await handleList(interaction, guildId);
   else await interaction.editReply(`Unknown subcommand: ${sub}`);
 });
 
@@ -328,7 +250,7 @@ registerComponent("market", async (interaction) => {
     }
     const modal = new ModalBuilder()
       .setCustomId(`market:modal:${betId}:${outcome}`)
-      .setTitle(`Buy ${outcome.toUpperCase()} \u2014 market #${betId}`)
+      .setTitle(`Bet ${outcome.toUpperCase()} \u2014 market #${betId}`)
       .addComponents(
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
@@ -368,7 +290,7 @@ registerComponent("market", async (interaction) => {
       await interaction.update(renderMarketView(betId));
     }
     await interaction.followUp({
-      content: `Bought **${amount}** on **${outcome}** (market #${betId}). Balance: **${balance}**.`,
+      content: `Bet **${amount}** on **${outcome}** (market #${betId}). Balance: **${balance}**.`,
       ephemeral: true,
     });
     return;

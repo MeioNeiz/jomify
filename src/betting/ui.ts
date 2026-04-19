@@ -7,13 +7,13 @@ import type { EmbedKind } from "../ui.js";
 
 export const MARKET_COPY = {
   title: (id: number, question: string) => `Market #${id} \u2014 ${question}`,
-  volumeLabel: "Volume",
-  positionsLabel: "Positions",
-  emptyPositions: "_No positions yet._",
-  footerOpen: "-# Tap Buy Yes / Buy No to take a position. Creator resolves below.",
+  volumeLabel: "Pool",
+  betsLabel: "Bets",
+  emptyBets: "_No bets yet._",
+  footerOpen: "-# Tap Bet Yes / Bet No to back a side. Creator resolves below.",
   creatorPrefix: "Created by",
   resolvedPrefix: "Resolved",
-  cancelledLine: "\u26A0\uFE0F Market cancelled \u2014 positions refunded.",
+  cancelledLine: "\u26A0\uFE0F Market cancelled \u2014 bets refunded.",
 } as const;
 
 /**
@@ -31,15 +31,15 @@ export const MARKET_EMOJI = {
 } as const;
 
 export const MARKET_BUTTONS = {
-  buyYes: {
+  betYes: {
     style: ButtonStyle.Secondary,
     emoji: MARKET_EMOJI.yes,
-    label: "Buy Yes",
+    label: "Bet Yes",
   },
-  buyNo: {
+  betNo: {
     style: ButtonStyle.Secondary,
     emoji: MARKET_EMOJI.no,
-    label: "Buy No",
+    label: "Bet No",
   },
   resolveYes: {
     style: ButtonStyle.Secondary,
