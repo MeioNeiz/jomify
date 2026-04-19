@@ -3,10 +3,13 @@ import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlit
 
 const now = sql`(datetime('now'))`;
 
-// One wallet per Steam account. Balances are integer credits (no
+// One wallet per Discord account. Balances are integer credits (no
 // decimals) to keep payouts exact and avoid floating-point drift.
+// Betting is a Discord-facing feature, so identity is Discord's — the
+// CS listener translates steam_id → discord_id via linked_accounts
+// before calling in.
 export const accounts = sqliteTable("accounts", {
-  steamId: text("steam_id").primaryKey(),
+  discordId: text("discord_id").primaryKey(),
   balance: integer("balance").notNull(),
   createdAt: text("created_at").notNull().default(now),
 });
@@ -31,7 +34,7 @@ export const bets = sqliteTable(
   (t) => [index("idx_bets_guild_status").on(t.guildId, t.status)],
 );
 
-// One wager per (bet, steam_id). Prevents a user from hedging both
+// One wager per (bet, discord_id). Prevents a user from hedging both
 // sides on the same bet — keeps pari-mutuel math simple and stops
 // "loss-farming" exploits against the match-based grant.
 export const wagers = sqliteTable(
@@ -40,13 +43,13 @@ export const wagers = sqliteTable(
     betId: integer("bet_id")
       .notNull()
       .references(() => bets.id),
-    steamId: text("steam_id").notNull(),
+    discordId: text("discord_id").notNull(),
     outcome: text("outcome").notNull(), // 'yes' | 'no'
     amount: integer("amount").notNull(),
     placedAt: text("placed_at").notNull().default(now),
   },
   (t) => [
-    primaryKey({ columns: [t.betId, t.steamId] }),
+    primaryKey({ columns: [t.betId, t.discordId] }),
     index("idx_wagers_bet").on(t.betId),
   ],
 );
@@ -60,7 +63,7 @@ export const weeklyWins = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     weekEnding: text("week_ending").notNull(),
-    steamId: text("steam_id").notNull(),
+    discordId: text("discord_id").notNull(),
     rank: integer("rank").notNull(),
     balanceSnapshot: integer("balance_snapshot").notNull(),
   },
@@ -74,7 +77,7 @@ export const ledger = sqliteTable(
   "ledger",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    steamId: text("steam_id").notNull(),
+    discordId: text("discord_id").notNull(),
     delta: integer("delta").notNull(),
     // 'starting-grant' | 'match' | 'bet-placed' | 'bet-payout' | 'bet-refund'
     reason: text("reason").notNull(),
@@ -82,5 +85,5 @@ export const ledger = sqliteTable(
     ref: text("ref"),
     at: text("at").notNull().default(now),
   },
-  (t) => [index("idx_ledger_steam_at").on(t.steamId, t.at)],
+  (t) => [index("idx_ledger_discord_at").on(t.discordId, t.at)],
 );

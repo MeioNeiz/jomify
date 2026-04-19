@@ -6,7 +6,7 @@ import type { Outcome } from "./bets.js";
 
 export type Wager = {
   betId: number;
-  steamId: string;
+  discordId: string;
   outcome: Outcome;
   amount: number;
   placedAt: string;
@@ -17,7 +17,7 @@ export function getWagersForBet(betId: number): Wager[] {
   const rows = db.select().from(wagers).where(eq(wagers.betId, betId)).all();
   return rows.map((r) => ({
     betId: r.betId,
-    steamId: r.steamId,
+    discordId: r.discordId,
     outcome: r.outcome as Outcome,
     amount: r.amount,
     placedAt: r.placedAt,
@@ -35,7 +35,7 @@ export function getWagersForBet(betId: number): Wager[] {
  */
 export function placeWager(
   betId: number,
-  steamId: string,
+  discordId: string,
   outcome: Outcome,
   amount: number,
 ): void {
@@ -48,7 +48,7 @@ export function placeWager(
     const existing = tx
       .select({ betId: wagers.betId })
       .from(wagers)
-      .where(and(eq(wagers.betId, betId), eq(wagers.steamId, steamId)))
+      .where(and(eq(wagers.betId, betId), eq(wagers.discordId, discordId)))
       .get();
     if (existing) throw new Error("You've already wagered on this bet");
 
@@ -57,14 +57,19 @@ export function placeWager(
     const account = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.steamId, steamId))
+      .where(eq(accounts.discordId, discordId))
       .get();
     const balance = account?.balance;
     if (balance == null) {
       // Lazy-create starting grant, then immediately check against it.
-      tx.insert(accounts).values({ steamId, balance: STARTING_BALANCE }).run();
+      tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
       tx.insert(ledger)
-        .values({ steamId, delta: STARTING_BALANCE, reason: "starting-grant", ref: null })
+        .values({
+          discordId,
+          delta: STARTING_BALANCE,
+          reason: "starting-grant",
+          ref: null,
+        })
         .run();
     }
     const current = balance ?? STARTING_BALANCE;
@@ -73,11 +78,11 @@ export function placeWager(
     }
     tx.update(accounts)
       .set({ balance: current - amount })
-      .where(eq(accounts.steamId, steamId))
+      .where(eq(accounts.discordId, discordId))
       .run();
     tx.insert(ledger)
-      .values({ steamId, delta: -amount, reason: "bet-placed", ref: String(betId) })
+      .values({ discordId, delta: -amount, reason: "bet-placed", ref: String(betId) })
       .run();
-    tx.insert(wagers).values({ betId, steamId, outcome, amount }).run();
+    tx.insert(wagers).values({ betId, discordId, outcome, amount }).run();
   });
 }

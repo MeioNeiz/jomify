@@ -3,13 +3,35 @@ import { STARTING_BALANCE } from "../config.js";
 import db from "../db.js";
 import { accounts, ledger } from "../schema.js";
 
-export function getBalance(steamId: string): number {
+export function getBalance(discordId: string): number {
   const row = db
     .select({ balance: accounts.balance })
     .from(accounts)
-    .where(eq(accounts.steamId, steamId))
+    .where(eq(accounts.discordId, discordId))
     .get();
   return row?.balance ?? 0;
+}
+
+/**
+ * Lazy-create the wallet with STARTING_BALANCE and a matching
+ * starting-grant ledger row. Idempotent: a no-op when the account
+ * already exists. Callers that just need the account to exist (e.g.
+ * `/bet balance` on a first-time user) should prefer this over
+ * adjustBalance(id, 0, …) for intent clarity.
+ */
+export function ensureAccount(discordId: string): void {
+  db.transaction((tx) => {
+    const existing = tx
+      .select({ balance: accounts.balance })
+      .from(accounts)
+      .where(eq(accounts.discordId, discordId))
+      .get();
+    if (existing) return;
+    tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
+    tx.insert(ledger)
+      .values({ discordId, delta: STARTING_BALANCE, reason: "starting-grant", ref: null })
+      .run();
+  });
 }
 
 /**
@@ -27,7 +49,7 @@ export function getBalance(steamId: string): number {
  * inline inside its own transaction.
  */
 export function adjustBalance(
-  steamId: string,
+  discordId: string,
   delta: number,
   reason: string,
   ref: string | null = null,
@@ -38,21 +60,29 @@ export function adjustBalance(
     const existing = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(eq(accounts.steamId, steamId))
+      .where(eq(accounts.discordId, discordId))
       .get();
     const startBalance = existing?.balance;
     if (startBalance == null) {
-      tx.insert(accounts).values({ steamId, balance: STARTING_BALANCE }).run();
+      tx.insert(accounts).values({ discordId, balance: STARTING_BALANCE }).run();
       tx.insert(ledger)
-        .values({ steamId, delta: STARTING_BALANCE, reason: "starting-grant", ref: null })
+        .values({
+          discordId,
+          delta: STARTING_BALANCE,
+          reason: "starting-grant",
+          ref: null,
+        })
         .run();
     }
     const current = startBalance ?? STARTING_BALANCE;
     const effectiveDelta = Math.max(delta, -current);
     const next = current + effectiveDelta;
     if (effectiveDelta === 0) return next; // no-op, skip the writes
-    tx.update(accounts).set({ balance: next }).where(eq(accounts.steamId, steamId)).run();
-    tx.insert(ledger).values({ steamId, delta: effectiveDelta, reason, ref }).run();
+    tx.update(accounts)
+      .set({ balance: next })
+      .where(eq(accounts.discordId, discordId))
+      .run();
+    tx.insert(ledger).values({ discordId, delta: effectiveDelta, reason, ref }).run();
     return next;
   });
 }

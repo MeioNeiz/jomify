@@ -16,6 +16,7 @@ import { accounts, bets, ledger, wagers, weeklyWins } from "../src/betting/schem
 import {
   adjustBalance,
   createBet,
+  ensureAccount,
   getAllTimeWins,
   getBalance,
   getBet,
@@ -29,19 +30,20 @@ import {
 import type { EventMap } from "../src/events.js";
 
 const GUILD = "bet-guild";
+const DISCORD_A = "100000000000000001";
+const DISCORD_B = "100000000000000002";
+const DISCORD_C = "100000000000000003";
+const DISCORD_D = "100000000000000004";
+const CREATOR_DISCORD = "100000000000000099";
 const STEAM_A = "76561198000000001";
-const STEAM_B = "76561198000000002";
-const STEAM_C = "76561198000000003";
-const STEAM_D = "76561198000000004";
-const CREATOR_DISCORD = "100000000000000001";
 
-// Sum of every ledger delta for a steamId. Invariant: should equal the
-// accounts.balance row for that steamId.
-function ledgerSum(steamId: string): number {
+// Sum of every ledger delta for a discordId. Invariant: should equal the
+// accounts.balance row for that discordId.
+function ledgerSum(discordId: string): number {
   const row = db
     .select({ total: sql<number>`COALESCE(SUM(${ledger.delta}), 0)` })
     .from(ledger)
-    .where(sql`${ledger.steamId} = ${steamId}`)
+    .where(sql`${ledger.discordId} = ${discordId}`)
     .get();
   return row?.total ?? 0;
 }
@@ -56,67 +58,80 @@ beforeEach(() => {
   db.delete(weeklyWins).run();
 });
 
-describe("accounts — adjustBalance + getBalance", () => {
+describe("accounts — adjustBalance + getBalance + ensureAccount", () => {
   test("first call lazy-creates account with starting balance + starting-grant row", () => {
     // Positive delta triggers the lazy create path on a fresh wallet.
-    const next = adjustBalance(STEAM_A, 3, "match", "m-1");
+    const next = adjustBalance(DISCORD_A, 3, "match", "m-1");
     expect(next).toBe(STARTING_BALANCE + 3);
-    expect(getBalance(STEAM_A)).toBe(STARTING_BALANCE + 3);
+    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE + 3);
 
-    const rows = getRecentLedger(STEAM_A, 10);
+    const rows = getRecentLedger(DISCORD_A, 10);
     // Oldest row is the starting grant, newest is the adjustment.
     expect(rows.map((r) => r.reason)).toEqual(["match", "starting-grant"]);
     expect(rows.map((r) => r.delta)).toEqual([3, STARTING_BALANCE]);
   });
 
-  test("positive delta adds to balance with matching ledger row", () => {
-    adjustBalance(STEAM_A, 0, "seed"); // lazy-create only, delta=0 after seed
-    // After seed: balance = STARTING_BALANCE, ledger has only starting-grant.
-    expect(getBalance(STEAM_A)).toBe(STARTING_BALANCE);
+  test("ensureAccount lazy-creates with starting grant on first call; no-op after", () => {
+    expect(getBalance(DISCORD_A)).toBe(0); // no row yet
+    ensureAccount(DISCORD_A);
+    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
+    const firstRows = getRecentLedger(DISCORD_A, 10);
+    expect(firstRows.map((r) => r.reason)).toEqual(["starting-grant"]);
 
-    adjustBalance(STEAM_A, 7, "bonus");
-    expect(getBalance(STEAM_A)).toBe(STARTING_BALANCE + 7);
-    const rows = getRecentLedger(STEAM_A, 10);
+    // Second call must not add a second grant row.
+    ensureAccount(DISCORD_A);
+    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
+    expect(getRecentLedger(DISCORD_A, 10).length).toBe(firstRows.length);
+  });
+
+  test("positive delta adds to balance with matching ledger row", () => {
+    adjustBalance(DISCORD_A, 0, "seed"); // lazy-create only, delta=0 after seed
+    // After seed: balance = STARTING_BALANCE, ledger has only starting-grant.
+    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE);
+
+    adjustBalance(DISCORD_A, 7, "bonus");
+    expect(getBalance(DISCORD_A)).toBe(STARTING_BALANCE + 7);
+    const rows = getRecentLedger(DISCORD_A, 10);
     expect(rows[0]?.delta).toBe(7);
     expect(rows[0]?.reason).toBe("bonus");
   });
 
   test("negative delta within balance decreases balance, writes that delta", () => {
-    adjustBalance(STEAM_A, 10, "grant"); // balance = STARTING_BALANCE + 10
-    const balBefore = getBalance(STEAM_A);
-    adjustBalance(STEAM_A, -4, "debit");
-    expect(getBalance(STEAM_A)).toBe(balBefore - 4);
-    const rows = getRecentLedger(STEAM_A, 10);
+    adjustBalance(DISCORD_A, 10, "grant"); // balance = STARTING_BALANCE + 10
+    const balBefore = getBalance(DISCORD_A);
+    adjustBalance(DISCORD_A, -4, "debit");
+    expect(getBalance(DISCORD_A)).toBe(balBefore - 4);
+    const rows = getRecentLedger(DISCORD_A, 10);
     expect(rows[0]?.delta).toBe(-4);
     expect(rows[0]?.reason).toBe("debit");
   });
 
   test("negative delta below zero clamps to -current; ledger reflects clamped delta", () => {
     // Fresh wallet: STARTING_BALANCE on lazy create. Request -100 → clamp to -STARTING_BALANCE.
-    adjustBalance(STEAM_A, -100, "penalty");
-    expect(getBalance(STEAM_A)).toBe(0);
-    const rows = getRecentLedger(STEAM_A, 10);
+    adjustBalance(DISCORD_A, -100, "penalty");
+    expect(getBalance(DISCORD_A)).toBe(0);
+    const rows = getRecentLedger(DISCORD_A, 10);
     // Newest row is the penalty, and its delta is the *clamped* value.
     expect(rows[0]?.delta).toBe(-STARTING_BALANCE);
     expect(rows[0]?.reason).toBe("penalty");
   });
 
   test("clamped to 0 no-op: no ledger row when effectiveDelta is 0", () => {
-    adjustBalance(STEAM_A, -100, "penalty"); // balance -> 0
-    const rowsBefore = getRecentLedger(STEAM_A, 10).length;
-    adjustBalance(STEAM_A, -5, "penalty-again"); // already 0, clamp is 0, no-op
-    const rowsAfter = getRecentLedger(STEAM_A, 10).length;
+    adjustBalance(DISCORD_A, -100, "penalty"); // balance -> 0
+    const rowsBefore = getRecentLedger(DISCORD_A, 10).length;
+    adjustBalance(DISCORD_A, -5, "penalty-again"); // already 0, clamp is 0, no-op
+    const rowsAfter = getRecentLedger(DISCORD_A, 10).length;
     expect(rowsAfter).toBe(rowsBefore);
-    expect(getBalance(STEAM_A)).toBe(0);
+    expect(getBalance(DISCORD_A)).toBe(0);
   });
 
   test("invariant: sum of ledger deltas equals current balance", () => {
-    adjustBalance(STEAM_A, 5, "a");
-    adjustBalance(STEAM_A, -3, "b");
-    adjustBalance(STEAM_A, 100, "c");
-    adjustBalance(STEAM_A, -200, "d"); // clamped
-    adjustBalance(STEAM_A, 2, "e");
-    expect(ledgerSum(STEAM_A)).toBe(getBalance(STEAM_A));
+    adjustBalance(DISCORD_A, 5, "a");
+    adjustBalance(DISCORD_A, -3, "b");
+    adjustBalance(DISCORD_A, 100, "c");
+    adjustBalance(DISCORD_A, -200, "d"); // clamped
+    adjustBalance(DISCORD_A, 2, "e");
+    expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A));
   });
 });
 
@@ -167,33 +182,33 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
 
   test("resolveBet rejects already-resolved bet", () => {
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    placeWager(id, STEAM_A, "yes", 1);
+    placeWager(id, DISCORD_A, "yes", 1);
     resolveBet(id, "yes");
     expect(() => resolveBet(id, "yes")).toThrow(/not open/);
   });
 
   test("pari-mutuel payout: winners split losers' pool proportionally (floor)", () => {
     // Seed balances large enough to cover the stakes.
-    adjustBalance(STEAM_A, 95, "seed"); // balance 100
-    adjustBalance(STEAM_B, 95, "seed"); // balance 100
-    adjustBalance(STEAM_C, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_A, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_B, 95, "seed"); // balance 100
+    adjustBalance(DISCORD_C, 95, "seed"); // balance 100
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Split?");
-    placeWager(id, STEAM_A, "yes", 10); // winner
-    placeWager(id, STEAM_B, "yes", 20); // winner
-    placeWager(id, STEAM_C, "no", 15); // loser
+    placeWager(id, DISCORD_A, "yes", 10); // winner
+    placeWager(id, DISCORD_B, "yes", 20); // winner
+    placeWager(id, DISCORD_C, "no", 15); // loser
 
-    const balBeforeA = getBalance(STEAM_A); // 90
-    const balBeforeB = getBalance(STEAM_B); // 80
-    const balBeforeC = getBalance(STEAM_C); // 85
+    const balBeforeA = getBalance(DISCORD_A); // 90
+    const balBeforeB = getBalance(DISCORD_B); // 80
+    const balBeforeC = getBalance(DISCORD_C); // 85
 
     resolveBet(id, "yes");
 
     // winnerPool=30, loserPool=15. A: 10 + floor(10*15/30) = 10+5 = 15.
     // B: 20 + floor(20*15/30) = 20+10 = 30.
-    expect(getBalance(STEAM_A)).toBe(balBeforeA + 15);
-    expect(getBalance(STEAM_B)).toBe(balBeforeB + 30);
-    expect(getBalance(STEAM_C)).toBe(balBeforeC); // loser: no refund
+    expect(getBalance(DISCORD_A)).toBe(balBeforeA + 15);
+    expect(getBalance(DISCORD_B)).toBe(balBeforeB + 30);
+    expect(getBalance(DISCORD_C)).toBe(balBeforeC); // loser: no refund
 
     // Bet marked resolved with the winning outcome.
     const bet = getBet(id);
@@ -203,24 +218,24 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
   });
 
   test("no winners: losers refunded to pre-wager balance, bet-refund row written", () => {
-    adjustBalance(STEAM_A, 95, "seed"); // 100
-    adjustBalance(STEAM_B, 95, "seed"); // 100
-    const preA = getBalance(STEAM_A);
-    const preB = getBalance(STEAM_B);
+    adjustBalance(DISCORD_A, 95, "seed"); // 100
+    adjustBalance(DISCORD_B, 95, "seed"); // 100
+    const preA = getBalance(DISCORD_A);
+    const preB = getBalance(DISCORD_B);
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Lopsided");
-    placeWager(id, STEAM_A, "no", 30);
-    placeWager(id, STEAM_B, "no", 40);
+    placeWager(id, DISCORD_A, "no", 30);
+    placeWager(id, DISCORD_B, "no", 40);
     // Nobody picked yes — resolving yes means both losers refund.
     resolveBet(id, "yes");
 
-    expect(getBalance(STEAM_A)).toBe(preA);
-    expect(getBalance(STEAM_B)).toBe(preB);
+    expect(getBalance(DISCORD_A)).toBe(preA);
+    expect(getBalance(DISCORD_B)).toBe(preB);
 
-    const aRows = getRecentLedger(STEAM_A, 10);
+    const aRows = getRecentLedger(DISCORD_A, 10);
     expect(aRows[0]?.reason).toBe("bet-refund");
     expect(aRows[0]?.delta).toBe(30);
-    const bRows = getRecentLedger(STEAM_B, 10);
+    const bRows = getRecentLedger(DISCORD_B, 10);
     expect(bRows[0]?.reason).toBe("bet-refund");
     expect(bRows[0]?.delta).toBe(40);
   });
@@ -228,21 +243,21 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
 
 describe("wagers — placeWager + getWagersForBet", () => {
   test("placeWager deducts balance + inserts wager + ledger row atomically", () => {
-    adjustBalance(STEAM_A, 20, "seed"); // balance = STARTING_BALANCE + 20
-    const before = getBalance(STEAM_A);
+    adjustBalance(DISCORD_A, 20, "seed"); // balance = STARTING_BALANCE + 20
+    const before = getBalance(DISCORD_A);
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    placeWager(id, STEAM_A, "yes", 7);
+    placeWager(id, DISCORD_A, "yes", 7);
 
-    expect(getBalance(STEAM_A)).toBe(before - 7);
+    expect(getBalance(DISCORD_A)).toBe(before - 7);
     const ws = getWagersForBet(id);
     expect(ws).toHaveLength(1);
     expect(ws[0]).toMatchObject({
       betId: id,
-      steamId: STEAM_A,
+      discordId: DISCORD_A,
       outcome: "yes",
       amount: 7,
     });
-    const rows = getRecentLedger(STEAM_A, 10);
+    const rows = getRecentLedger(DISCORD_A, 10);
     expect(rows[0]?.reason).toBe("bet-placed");
     expect(rows[0]?.delta).toBe(-7);
     expect(rows[0]?.ref).toBe(String(id));
@@ -250,83 +265,85 @@ describe("wagers — placeWager + getWagersForBet", () => {
 
   test("rejects amount <= 0", () => {
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    expect(() => placeWager(id, STEAM_A, "yes", 0)).toThrow(/positive/);
-    expect(() => placeWager(id, STEAM_A, "yes", -5)).toThrow(/positive/);
+    expect(() => placeWager(id, DISCORD_A, "yes", 0)).toThrow(/positive/);
+    expect(() => placeWager(id, DISCORD_A, "yes", -5)).toThrow(/positive/);
   });
 
   test("rejects closed bet", () => {
-    adjustBalance(STEAM_A, 20, "seed");
+    adjustBalance(DISCORD_A, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    placeWager(id, STEAM_A, "yes", 1);
+    placeWager(id, DISCORD_A, "yes", 1);
     resolveBet(id, "yes");
-    expect(() => placeWager(id, STEAM_B, "no", 1)).toThrow(/not open/);
+    expect(() => placeWager(id, DISCORD_B, "no", 1)).toThrow(/not open/);
   });
 
-  test("rejects double-wager by same steamId on same bet", () => {
-    adjustBalance(STEAM_A, 20, "seed");
+  test("rejects double-wager by same discordId on same bet", () => {
+    adjustBalance(DISCORD_A, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    placeWager(id, STEAM_A, "yes", 3);
-    expect(() => placeWager(id, STEAM_A, "no", 2)).toThrow(/already wagered/);
+    placeWager(id, DISCORD_A, "yes", 3);
+    expect(() => placeWager(id, DISCORD_A, "no", 2)).toThrow(/already wagered/);
   });
 
   test("rejects insufficient balance (explicit throw, not clamp)", () => {
     // Fresh wallet: STARTING_BALANCE only. 100 > STARTING_BALANCE.
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    expect(() => placeWager(id, STEAM_A, "yes", 100)).toThrow(/Insufficient balance/);
+    expect(() => placeWager(id, DISCORD_A, "yes", 100)).toThrow(/Insufficient balance/);
     // Ensure nothing was persisted — the rollback should leave no wager
     // and no bet-placed ledger row behind.
     expect(getWagersForBet(id)).toHaveLength(0);
-    const rows = getRecentLedger(STEAM_A, 10);
+    const rows = getRecentLedger(DISCORD_A, 10);
     expect(rows.some((r) => r.reason === "bet-placed")).toBe(false);
   });
 
   test("getWagersForBet returns all wagers on the bet", () => {
-    adjustBalance(STEAM_A, 20, "seed");
-    adjustBalance(STEAM_B, 20, "seed");
-    adjustBalance(STEAM_C, 20, "seed");
+    adjustBalance(DISCORD_A, 20, "seed");
+    adjustBalance(DISCORD_B, 20, "seed");
+    adjustBalance(DISCORD_C, 20, "seed");
     const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
-    placeWager(id, STEAM_A, "yes", 1);
-    placeWager(id, STEAM_B, "no", 2);
-    placeWager(id, STEAM_C, "yes", 3);
+    placeWager(id, DISCORD_A, "yes", 1);
+    placeWager(id, DISCORD_B, "no", 2);
+    placeWager(id, DISCORD_C, "yes", 3);
     const ws = getWagersForBet(id);
     expect(ws).toHaveLength(3);
-    expect(ws.map((w) => w.steamId).sort()).toEqual([STEAM_A, STEAM_B, STEAM_C].sort());
+    expect(ws.map((w) => w.discordId).sort()).toEqual(
+      [DISCORD_A, DISCORD_B, DISCORD_C].sort(),
+    );
   });
 });
 
 describe("leaderboard — getCurrentStandings + getAllTimeWins", () => {
   test("getCurrentStandings sorts by balance desc, limits to N", () => {
-    adjustBalance(STEAM_A, 10, "seed"); // STARTING + 10
-    adjustBalance(STEAM_B, 50, "seed"); // STARTING + 50
-    adjustBalance(STEAM_C, 30, "seed"); // STARTING + 30
-    adjustBalance(STEAM_D, 20, "seed"); // STARTING + 20
+    adjustBalance(DISCORD_A, 10, "seed"); // STARTING + 10
+    adjustBalance(DISCORD_B, 50, "seed"); // STARTING + 50
+    adjustBalance(DISCORD_C, 30, "seed"); // STARTING + 30
+    adjustBalance(DISCORD_D, 20, "seed"); // STARTING + 20
 
     const top2 = getCurrentStandings(2);
     expect(top2).toHaveLength(2);
-    expect(top2[0]?.steamId).toBe(STEAM_B);
-    expect(top2[1]?.steamId).toBe(STEAM_C);
+    expect(top2[0]?.discordId).toBe(DISCORD_B);
+    expect(top2[1]?.discordId).toBe(DISCORD_C);
     expect(top2[0]?.balance).toBeGreaterThan(top2[1]?.balance ?? 0);
   });
 
-  test("getAllTimeWins counts rank=1 rows per steamId, desc by count", () => {
+  test("getAllTimeWins counts rank=1 rows per discordId, desc by count", () => {
     db.insert(weeklyWins)
       .values([
-        { weekEnding: "2026-01-05", steamId: STEAM_A, rank: 1, balanceSnapshot: 100 },
-        { weekEnding: "2026-01-05", steamId: STEAM_B, rank: 2, balanceSnapshot: 90 },
-        { weekEnding: "2026-01-12", steamId: STEAM_A, rank: 1, balanceSnapshot: 80 },
-        { weekEnding: "2026-01-12", steamId: STEAM_C, rank: 2, balanceSnapshot: 70 },
-        { weekEnding: "2026-01-19", steamId: STEAM_B, rank: 1, balanceSnapshot: 60 },
-        { weekEnding: "2026-01-19", steamId: STEAM_A, rank: 1, balanceSnapshot: 55 },
+        { weekEnding: "2026-01-05", discordId: DISCORD_A, rank: 1, balanceSnapshot: 100 },
+        { weekEnding: "2026-01-05", discordId: DISCORD_B, rank: 2, balanceSnapshot: 90 },
+        { weekEnding: "2026-01-12", discordId: DISCORD_A, rank: 1, balanceSnapshot: 80 },
+        { weekEnding: "2026-01-12", discordId: DISCORD_C, rank: 2, balanceSnapshot: 70 },
+        { weekEnding: "2026-01-19", discordId: DISCORD_B, rank: 1, balanceSnapshot: 60 },
+        { weekEnding: "2026-01-19", discordId: DISCORD_A, rank: 1, balanceSnapshot: 55 },
       ])
       .run();
-    // Note: the 2026-01-19 row for STEAM_A is also rank=1 — two winners
+    // Note: the 2026-01-19 row for DISCORD_A is also rank=1 — two winners
     // same week is not realistic, but the tally is just COUNT(rank=1).
     const rows = getAllTimeWins(10);
-    // STEAM_A has 3 rank=1 rows, STEAM_B has 1.
-    expect(rows[0]).toEqual({ steamId: STEAM_A, weeksWon: 3 });
-    expect(rows[1]).toEqual({ steamId: STEAM_B, weeksWon: 1 });
-    // STEAM_C never hit rank=1, so excluded entirely.
-    expect(rows.find((r) => r.steamId === STEAM_C)).toBeUndefined();
+    // DISCORD_A has 3 rank=1 rows, DISCORD_B has 1.
+    expect(rows[0]).toEqual({ discordId: DISCORD_A, weeksWon: 3 });
+    expect(rows[1]).toEqual({ discordId: DISCORD_B, weeksWon: 1 });
+    // DISCORD_C never hit rank=1, so excluded entirely.
+    expect(rows.find((r) => r.discordId === DISCORD_C)).toBeUndefined();
   });
 });
 
@@ -338,7 +355,7 @@ describe("computeMatchDelta", () => {
     return {
       matchId: "m-1",
       steamId: STEAM_A,
-      discordId: null,
+      discordId: DISCORD_A,
       rating: 0,
       outcome: "loss",
       premierDelta: null,
@@ -373,7 +390,7 @@ describe("computeMatchDelta", () => {
     const e = makeEvent({
       outcome: "win",
       rating: 0.05,
-      trackedTeammates: [STEAM_B, STEAM_C, STEAM_D],
+      trackedTeammates: ["s-b", "s-c", "s-d"],
     });
     expect(computeMatchDelta(e)).toBe(
       MATCH_GRANT_BASE + 3 * MATCH_GRANT_PER_TEAMMATE + MATCH_GRANT_WIN_BONUS,
@@ -426,7 +443,7 @@ describe("computeMatchDelta", () => {
     const e = makeEvent({
       outcome: "win",
       rating: BAD_GAME_RATING,
-      trackedTeammates: [STEAM_B],
+      trackedTeammates: ["s-b"],
       stats: null,
     });
     // BASE + 1*PER_TEAMMATE + WIN_BONUS - PENALTY_BAD_GAME

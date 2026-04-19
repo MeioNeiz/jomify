@@ -1,9 +1,9 @@
 import { type ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
 import { wrapCommand } from "../../commands/handler.js";
-import { getDiscordId, getSteamId } from "../../cs/store.js";
 import { embed, pad, rankPrefix, table } from "../../ui.js";
 import {
   createBet,
+  ensureAccount,
   getAllTimeWins,
   getBalance,
   getBet,
@@ -95,14 +95,6 @@ export const data = new SlashCommandBuilder()
       ),
   );
 
-function requireLinkedSteamId(
-  interaction: ChatInputCommandInteraction,
-): { steamId: string } | null {
-  const steamId = getSteamId(interaction.user.id);
-  if (!steamId) return null;
-  return { steamId };
-}
-
 type Pool = { yes: number; no: number; total: number };
 
 function poolForBet(betId: number): Pool {
@@ -133,11 +125,7 @@ async function handleOpen(interaction: ChatInputCommandInteraction, guildId: str
 }
 
 async function handlePlace(interaction: ChatInputCommandInteraction) {
-  const linked = requireLinkedSteamId(interaction);
-  if (!linked) {
-    await interaction.editReply("Link your Steam account first with `/link`.");
-    return;
-  }
+  const discordId = interaction.user.id;
   const betId = interaction.options.getInteger("bet", true);
   const outcome = interaction.options.getString("outcome", true) as Outcome;
   const amount = interaction.options.getInteger("amount", true);
@@ -146,12 +134,12 @@ async function handlePlace(interaction: ChatInputCommandInteraction) {
     return;
   }
   try {
-    placeWager(betId, linked.steamId, outcome, amount);
+    placeWager(betId, discordId, outcome, amount);
   } catch (err) {
     await interaction.editReply((err as Error).message);
     return;
   }
-  const balance = getBalance(linked.steamId);
+  const balance = getBalance(discordId);
   const pool = poolForBet(betId);
   await interaction.editReply(
     `Wagered ${amount} on **${outcome}** (bet #${betId}). ` +
@@ -216,13 +204,12 @@ async function handleResolve(interaction: ChatInputCommandInteraction) {
 }
 
 async function handleBalance(interaction: ChatInputCommandInteraction) {
-  const linked = requireLinkedSteamId(interaction);
-  if (!linked) {
-    await interaction.editReply("Link your Steam account first with `/link`.");
-    return;
-  }
-  const balance = getBalance(linked.steamId);
-  const ledgerRows = getRecentLedger(linked.steamId, 8);
+  // Seed on first view so the embed always shows the starting grant
+  // instead of a confusing 0. Cheap + idempotent.
+  const discordId = interaction.user.id;
+  ensureAccount(discordId);
+  const balance = getBalance(discordId);
+  const ledgerRows = getRecentLedger(discordId, 8);
   const rows = ledgerRows.map((r) => {
     const sign = r.delta > 0 ? `+${r.delta}` : String(r.delta);
     const ref = r.ref ? `#${r.ref}` : "";
@@ -244,10 +231,8 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
       return;
     }
     const lines = rows.map((r, i) => {
-      const discordId = getDiscordId(r.steamId);
-      const who = discordId ? `<@${discordId}>` : r.steamId;
       const wk = r.weeksWon === 1 ? "week" : "weeks";
-      return `${rankPrefix(i)} ${who} \u2014 **${r.weeksWon}** ${wk} won`;
+      return `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.weeksWon}** ${wk} won`;
     });
     const e = embed().setTitle("All-time leaderboard").setDescription(lines.join("\n"));
     await interaction.editReply({ embeds: [e] });
@@ -259,15 +244,13 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
     await interaction.editReply("No balances yet — play a match to get started.");
     return;
   }
-  const lines = rows.map((r, i) => {
-    const discordId = getDiscordId(r.steamId);
-    const who = discordId ? `<@${discordId}>` : r.steamId;
-    return `${rankPrefix(i)} ${who} \u2014 **${r.balance}** credits`;
-  });
+  const lines = rows.map(
+    (r, i) => `${rankPrefix(i)} <@${r.discordId}> \u2014 **${r.balance}** credits`,
+  );
   const e = embed()
     .setTitle("This week's standings")
     .setDescription(
-      `${lines.join("\n")}\n-# Resets Monday 00:00 UTC. Top 3 get a weekly win archived.`,
+      `${lines.join("\n")}\n-# Resets Monday 00:00 Europe/London. Top 3 get a weekly win archived.`,
     );
   await interaction.editReply({ embeds: [e] });
 }

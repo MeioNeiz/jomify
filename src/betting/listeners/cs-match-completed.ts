@@ -48,11 +48,14 @@ export function computeMatchDelta(e: Event): number {
 
 on("cs:match-completed", (e) => {
   try {
+    // Betting wallets are keyed on Discord id. Matches from a tracked
+    // but unlinked Steam account have no one to credit — skip silently.
+    if (!e.discordId) return;
     const delta = computeMatchDelta(e);
     if (delta === 0) return;
-    const next = adjustBalance(e.steamId, delta, "match", e.matchId);
+    const next = adjustBalance(e.discordId, delta, "match", e.matchId);
     log.debug(
-      { steamId: e.steamId, matchId: e.matchId, delta, balance: next },
+      { discordId: e.discordId, matchId: e.matchId, delta, balance: next },
       delta > 0 ? "granted match credits" : "deducted match penalty",
     );
   } catch (err) {
