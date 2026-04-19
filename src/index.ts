@@ -5,11 +5,10 @@ import { dispatchComponent } from "./components.js";
 // the CS module ignorant of betting while ensuring grants land in the
 // same process.
 import "./betting/listeners/cs-match-completed.js";
-import { startWeeklyReset } from "./betting/weekly-reset.js";
 import { config } from "./config.js";
 import { startWatcher } from "./cs/watcher.js";
-import { startWeeklyLeaderboard } from "./cs/weekly.js";
 import log from "./logger.js";
+import { startWeekly } from "./weekly.js";
 
 const commandMap = new Collection<string, Command>();
 for (const [name, cmd] of commands) commandMap.set(name, cmd);
@@ -25,8 +24,7 @@ const client = new Client({
 client.once(Events.ClientReady, (c) => {
   log.info({ tag: c.user.tag }, "Jomify online");
   startWatcher(client);
-  startWeeklyLeaderboard(client);
-  startWeeklyReset(client);
+  startWeekly(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

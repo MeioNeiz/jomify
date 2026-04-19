@@ -98,16 +98,16 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
         const acct = tx
           .select({ balance: accounts.balance })
           .from(accounts)
-          .where(eq(accounts.steamId, w.steamId))
+          .where(eq(accounts.discordId, w.discordId))
           .get();
         const current = acct?.balance ?? 0;
         tx.update(accounts)
           .set({ balance: current + w.amount })
-          .where(eq(accounts.steamId, w.steamId))
+          .where(eq(accounts.discordId, w.discordId))
           .run();
         tx.insert(ledger)
           .values({
-            steamId: w.steamId,
+            discordId: w.discordId,
             delta: w.amount,
             reason: "bet-refund",
             ref: String(betId),
@@ -124,16 +124,16 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
         const acct = tx
           .select({ balance: accounts.balance })
           .from(accounts)
-          .where(eq(accounts.steamId, w.steamId))
+          .where(eq(accounts.discordId, w.discordId))
           .get();
         const current = acct?.balance ?? 0;
         tx.update(accounts)
           .set({ balance: current + payout })
-          .where(eq(accounts.steamId, w.steamId))
+          .where(eq(accounts.discordId, w.discordId))
           .run();
         tx.insert(ledger)
           .values({
-            steamId: w.steamId,
+            discordId: w.discordId,
             delta: payout,
             reason: "bet-payout",
             ref: String(betId),

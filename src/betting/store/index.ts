@@ -1,4 +1,4 @@
-export { adjustBalance, getBalance } from "./accounts.js";
+export { adjustBalance, ensureAccount, getBalance } from "./accounts.js";
 export {
   type Bet,
   type BetStatus,

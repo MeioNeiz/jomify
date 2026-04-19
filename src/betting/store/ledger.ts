@@ -4,7 +4,7 @@ import { ledger } from "../schema.js";
 
 export type LedgerRow = {
   id: number;
-  steamId: string;
+  discordId: string;
   delta: number;
   reason: string;
   ref: string | null;
@@ -12,11 +12,11 @@ export type LedgerRow = {
 };
 
 /** Recent ledger entries for a user, newest first. */
-export function getRecentLedger(steamId: string, limit = 10): LedgerRow[] {
+export function getRecentLedger(discordId: string, limit = 10): LedgerRow[] {
   return db
     .select()
     .from(ledger)
-    .where(eq(ledger.steamId, steamId))
+    .where(eq(ledger.discordId, discordId))
     .orderBy(desc(ledger.at))
     .limit(limit)
     .all();
