@@ -1,5 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { LMSR_B, LMSR_RAKE } from "../config.js";
 import db from "../db.js";
+import { lmsrInitShares } from "../lmsr.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
 
 export type Outcome = "yes" | "no";
@@ -17,6 +19,23 @@ export type Bet = {
   expiresAt: string | null;
   channelId: string | null;
   messageId: string | null;
+  resolverKind: string | null;
+  resolverArgs: string | null;
+  resolverState: string | null;
+  // LMSR market-maker state. b=0 = legacy pari-mutuel market.
+  initialProb: number;
+  b: number;
+  qYes: number;
+  qNo: number;
+};
+
+export type CreateBetOptions = {
+  resolverKind?: string;
+  resolverArgs?: unknown;
+  // Creator's initial probability estimate (0 < p < 1). Defaults to 0.5.
+  // Used to seed the LMSR share counts so the market doesn't start at
+  // an arbitrary 50/50 when the creator has a genuine prior.
+  initialProb?: number;
 };
 
 export function createBet(
@@ -24,18 +43,54 @@ export function createBet(
   creatorDiscordId: string,
   question: string,
   expiresAt: string | null = null,
+  options: CreateBetOptions = {},
 ): number {
+  const resolverArgs =
+    options.resolverArgs === undefined ? null : JSON.stringify(options.resolverArgs);
+  const initialProb = options.initialProb ?? 0.5;
+  const { qYes, qNo } = lmsrInitShares(initialProb, LMSR_B);
   const row = db
     .insert(bets)
-    .values({ guildId, question, creatorDiscordId, status: "open", expiresAt })
+    .values({
+      guildId,
+      question,
+      creatorDiscordId,
+      status: "open",
+      expiresAt,
+      resolverKind: options.resolverKind ?? null,
+      resolverArgs,
+      resolverState: null,
+      initialProb,
+      b: LMSR_B,
+      qYes,
+      qNo,
+    })
     .returning({ id: bets.id })
     .get();
   return row.id;
 }
 
-export function getBet(id: number): Bet | null {
-  const row = db.select().from(bets).where(eq(bets.id, id)).get();
-  if (!row) return null;
+/** Persist the resolver's scratchpad after a poll tick. */
+export function setResolverState(betId: number, state: unknown): void {
+  db.update(bets)
+    .set({ resolverState: state === null ? null : JSON.stringify(state) })
+    .where(eq(bets.id, betId))
+    .run();
+}
+
+/** Open bets with an auto-resolver attached. Drives the poller. */
+export function getOpenResolverBets(): Bet[] {
+  const rows = db
+    .select()
+    .from(bets)
+    .where(and(eq(bets.status, "open"), isNotNull(bets.resolverKind)))
+    .all();
+  return rows.map(toBet);
+}
+
+type BetRow = typeof bets.$inferSelect;
+
+function toBet(row: BetRow): Bet {
   return {
     id: row.id,
     guildId: row.guildId,
@@ -48,7 +103,32 @@ export function getBet(id: number): Bet | null {
     expiresAt: row.expiresAt,
     channelId: row.channelId,
     messageId: row.messageId,
+    resolverKind: row.resolverKind,
+    resolverArgs: row.resolverArgs,
+    resolverState: row.resolverState,
+    initialProb: row.initialProb,
+    b: row.b,
+    qYes: row.qYes,
+    qNo: row.qNo,
   };
+}
+
+export function getBet(id: number): Bet | null {
+  const row = db.select().from(bets).where(eq(bets.id, id)).get();
+  return row ? toBet(row) : null;
+}
+
+/**
+ * Push the market's deadline forward. Pass null to remove the expiry
+ * entirely. Throws if the bet doesn't exist or is already closed.
+ */
+export function extendBet(betId: number, newExpiresAt: string | null): void {
+  db.transaction((tx) => {
+    const bet = tx.select().from(bets).where(eq(bets.id, betId)).get();
+    if (!bet) throw new Error(`Bet ${betId} does not exist`);
+    if (bet.status !== "open") throw new Error(`Bet ${betId} is not open`);
+    tx.update(bets).set({ expiresAt: newExpiresAt }).where(eq(bets.id, betId)).run();
+  });
 }
 
 /** Open bets in a guild, newest first. */
@@ -59,19 +139,7 @@ export function listOpenBets(guildId: string): Bet[] {
     .where(and(eq(bets.guildId, guildId), eq(bets.status, "open")))
     .orderBy(desc(bets.createdAt))
     .all();
-  return rows.map((row) => ({
-    id: row.id,
-    guildId: row.guildId,
-    question: row.question,
-    creatorDiscordId: row.creatorDiscordId,
-    status: row.status as BetStatus,
-    winningOutcome: (row.winningOutcome as Outcome | null) ?? null,
-    createdAt: row.createdAt,
-    resolvedAt: row.resolvedAt,
-    expiresAt: row.expiresAt,
-    channelId: row.channelId,
-    messageId: row.messageId,
-  }));
+  return rows.map(toBet);
 }
 
 /**
@@ -111,19 +179,17 @@ export function getExpiredOpenBets(): Array<{
 }
 
 /**
- * Resolve a bet to the given outcome and pay out winners pari-mutuel:
- * each winner gets their stake back plus a proportional slice of the
- * losing pool. Edge cases:
- *   - no winners → losers are refunded (bet behaves as a no-op)
- *   - no losers → winners just get their stake back
+ * Resolve a bet to the given outcome.
  *
- * Integer math: the losing pool is distributed by integer floor, so a
- * small remainder (at most winners_count − 1 credits) stays in the
- * house. Acceptable for v1; revisit if users complain about rounding.
+ * LMSR markets (b > 0): each winner receives floor(shares × (1 − rake))
+ * shekels. The house covers any gap between payouts due and actual stakes
+ * collected; this gap is bounded at b × ln(2) ≈ 20.8 shekels for b=30.
+ * A 2% rake on winning shares partially offsets the subsidy over time.
  *
- * Lives in bets.ts even though it writes to accounts + ledger + wagers
- * inline: the whole payout must share one transaction for atomicity,
- * so the bet-lifecycle module owns the reads into sibling tables.
+ * Legacy pari-mutuel markets (b = 0): original proportional-split logic,
+ * unchanged so existing open markets settle correctly.
+ *
+ * In both cases, if no one picked the winning side all losers are refunded.
  */
 export function resolveBet(betId: number, winningOutcome: Outcome): void {
   db.transaction((tx) => {
@@ -134,66 +200,45 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
     const rows = tx.select().from(wagers).where(eq(wagers.betId, betId)).all();
     const winners = rows.filter((w) => w.outcome === winningOutcome);
     const losers = rows.filter((w) => w.outcome !== winningOutcome);
-    const winnerPool = winners.reduce((s, w) => s + w.amount, 0);
-    const loserPool = losers.reduce((s, w) => s + w.amount, 0);
+
+    function credit(discordId: string, amount: number, reason: string) {
+      const acct = tx
+        .select({ balance: accounts.balance })
+        .from(accounts)
+        .where(eq(accounts.discordId, discordId))
+        .get();
+      const current = acct?.balance ?? 0;
+      tx.update(accounts)
+        .set({ balance: current + amount })
+        .where(eq(accounts.discordId, discordId))
+        .run();
+      tx.insert(ledger)
+        .values({ discordId, delta: amount, reason, ref: String(betId) })
+        .run();
+    }
 
     if (winners.length === 0) {
-      // No one picked the winning side — refund losers rather than
-      // burning their stakes.
-      for (const w of losers) {
-        const acct = tx
-          .select({ balance: accounts.balance })
-          .from(accounts)
-          .where(eq(accounts.discordId, w.discordId))
-          .get();
-        const current = acct?.balance ?? 0;
-        tx.update(accounts)
-          .set({ balance: current + w.amount })
-          .where(eq(accounts.discordId, w.discordId))
-          .run();
-        tx.insert(ledger)
-          .values({
-            discordId: w.discordId,
-            delta: w.amount,
-            reason: "bet-refund",
-            ref: String(betId),
-          })
-          .run();
+      for (const w of losers) credit(w.discordId, w.amount, "bet-refund");
+    } else if (bet.b > 0) {
+      // LMSR: each winner gets floor(shares × (1 − rake)) shekels.
+      // House absorbs any shortfall (bounded by b × ln(2)).
+      for (const w of winners) {
+        const payout = Math.floor(w.shares * (1 - LMSR_RAKE));
+        if (payout > 0) credit(w.discordId, payout, "bet-payout");
       }
     } else {
+      // Legacy pari-mutuel: winners split the loser pool proportionally.
+      const winnerPool = winners.reduce((s, w) => s + w.amount, 0);
+      const loserPool = losers.reduce((s, w) => s + w.amount, 0);
       for (const w of winners) {
-        // Share of loser pool proportional to this wager's share of
-        // the winner pool. Integer floor — remainder stays in the house.
         const winnings =
           winnerPool > 0 ? Math.floor((w.amount * loserPool) / winnerPool) : 0;
-        const payout = w.amount + winnings;
-        const acct = tx
-          .select({ balance: accounts.balance })
-          .from(accounts)
-          .where(eq(accounts.discordId, w.discordId))
-          .get();
-        const current = acct?.balance ?? 0;
-        tx.update(accounts)
-          .set({ balance: current + payout })
-          .where(eq(accounts.discordId, w.discordId))
-          .run();
-        tx.insert(ledger)
-          .values({
-            discordId: w.discordId,
-            delta: payout,
-            reason: "bet-payout",
-            ref: String(betId),
-          })
-          .run();
+        credit(w.discordId, w.amount + winnings, "bet-payout");
       }
     }
 
     tx.update(bets)
-      .set({
-        status: "resolved",
-        winningOutcome,
-        resolvedAt: sql`(datetime('now'))`,
-      })
+      .set({ status: "resolved", winningOutcome, resolvedAt: sql`(datetime('now'))` })
       .where(eq(bets.id, betId))
       .run();
   });

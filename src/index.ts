@@ -5,7 +5,12 @@ import { dispatchComponent } from "./components.js";
 // the CS module ignorant of betting while ensuring grants land in the
 // same process.
 import "./betting/listeners/cs-match-completed.js";
+// Side-effect import: registers the CS next-match resolver kinds. Must
+// land before the watcher starts so the registry is populated when the
+// first tick fires.
+import "./betting/resolvers/cs-next-match.js";
 import { startExpiryWatcher } from "./betting/expiry.js";
+import { startResolverWatcher } from "./betting/resolvers/watcher.js";
 import { config } from "./config.js";
 import { startWatcher } from "./cs/watcher.js";
 import log from "./logger.js";
@@ -27,6 +32,7 @@ client.once(Events.ClientReady, (c) => {
   startWatcher(client);
   startWeekly(client);
   startExpiryWatcher(client);
+  startResolverWatcher(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {

@@ -53,14 +53,21 @@ sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_bets_guild_status
     ON bets (guild_id, status)
 `);
-// Post-install migrations for installs that predate the auto-expiry
-// columns. Each try swallows the usual "column already exists" error.
-// Runs BEFORE the expires_at index so existing DBs have the column
-// before we try to index it.
+// Post-install migrations for installs that predate newer columns.
+// Each try swallows the usual "column already exists" error. Runs
+// BEFORE the dependent indexes so existing DBs have the columns
+// before we try to index them.
 for (const col of [
   "ALTER TABLE bets ADD COLUMN expires_at TEXT",
   "ALTER TABLE bets ADD COLUMN channel_id TEXT",
   "ALTER TABLE bets ADD COLUMN message_id TEXT",
+  "ALTER TABLE bets ADD COLUMN resolver_kind TEXT",
+  "ALTER TABLE bets ADD COLUMN resolver_args TEXT",
+  "ALTER TABLE bets ADD COLUMN resolver_state TEXT",
+  "ALTER TABLE bets ADD COLUMN initial_prob REAL NOT NULL DEFAULT 0.5",
+  "ALTER TABLE bets ADD COLUMN b INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE bets ADD COLUMN q_yes REAL NOT NULL DEFAULT 0",
+  "ALTER TABLE bets ADD COLUMN q_no REAL NOT NULL DEFAULT 0",
 ]) {
   try {
     sqlite.run(col);
@@ -73,6 +80,10 @@ sqlite.run(`
     ON bets (expires_at)
 `);
 sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_bets_resolver
+    ON bets (resolver_kind) WHERE resolver_kind IS NOT NULL
+`);
+sqlite.run(`
   CREATE TABLE IF NOT EXISTS wagers (
     bet_id     INTEGER NOT NULL REFERENCES bets(id),
     discord_id TEXT NOT NULL,
@@ -82,6 +93,18 @@ sqlite.run(`
     PRIMARY KEY (bet_id, discord_id)
   )
 `);
+// Wagers ALTERs run AFTER its CREATE TABLE — the loop above only
+// covers bets columns because that table is created earlier in this
+// file. Same swallowed-error pattern: fresh installs get the ADD
+// COLUMN against the newly-created table, existing installs get the
+// "duplicate column" throw, test runs trip the same path as fresh.
+for (const col of ["ALTER TABLE wagers ADD COLUMN shares REAL NOT NULL DEFAULT 0"]) {
+  try {
+    sqlite.run(col);
+  } catch {
+    /* already exists */
+  }
+}
 sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_wagers_bet ON wagers (bet_id)
 `);
