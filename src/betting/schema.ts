@@ -51,6 +51,10 @@ export const bets = sqliteTable(
     resolverKind: text("resolver_kind"),
     resolverArgs: text("resolver_args"),
     resolverState: text("resolver_state"),
+    // Challenge market: null on regular markets. When set, the embed shows
+    // a directed challenge notice until challenge_accept_by has passed.
+    challengeTargetDiscordId: text("challenge_target_discord_id"),
+    challengeAcceptBy: text("challenge_accept_by"),
     // LMSR market-maker state. b=0 means legacy pari-mutuel market.
     // initialProb is the creator's starting estimate; qYes/qNo are the
     // running share counts updated on every wager.

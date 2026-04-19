@@ -4,10 +4,11 @@
 // InteractionCreate listener. Each component's customId is namespaced
 // as `<prefix>:<rest>`; the prefix chooses the handler, the rest is
 // state passed back on click.
-import type {
-  ButtonInteraction,
-  ModalSubmitInteraction,
-  StringSelectMenuInteraction,
+import {
+  type ButtonInteraction,
+  MessageFlags,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import log from "./logger.js";
 
@@ -35,7 +36,10 @@ export async function dispatchComponent(
   if (!handler) {
     log.warn({ customId: interaction.customId }, "No handler for component");
     try {
-      await interaction.reply({ content: "This control has expired.", ephemeral: true });
+      await interaction.reply({
+        content: "This control has expired.",
+        flags: MessageFlags.Ephemeral,
+      });
     } catch {
       /* interaction may already be gone */
     }
@@ -52,7 +56,7 @@ export async function dispatchComponent(
       } else {
         await interaction.reply({
           content: "Something went wrong handling that control.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
     } catch {

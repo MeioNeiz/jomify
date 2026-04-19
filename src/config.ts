@@ -22,6 +22,12 @@ export const config = {
   get steamApiKey() {
     return env("STEAM_API_KEY");
   },
+  get alphaVantageKey(): string | null {
+    return process.env.ALPHA_VANTAGE_KEY ?? null;
+  },
+  get kalshiApiKey(): string | null {
+    return process.env.KALSHI_API_KEY ?? null;
+  },
   get csfloatApiKey(): string | null {
     return process.env.CSFLOAT_API_KEY ?? null;
   },

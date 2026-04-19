@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   type EmbedBuilder,
   type InteractionEditReplyOptions,
+  MessageFlags,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
@@ -260,12 +261,18 @@ registerComponent("best", async (interaction) => {
   if (!(stat in BEST_STATS)) return;
   const days = Number(daysStr);
   if (!interaction.guildId) {
-    await interaction.reply({ content: "Use this in a server.", ephemeral: true });
+    await interaction.reply({
+      content: "Use this in a server.",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
   const steamIds = getTrackedPlayers(interaction.guildId);
   if (!steamIds.length) {
-    await interaction.reply({ content: "No tracked players.", ephemeral: true });
+    await interaction.reply({
+      content: "No tracked players.",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
   const v = loadView(steamIds, stat, days);

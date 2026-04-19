@@ -27,15 +27,19 @@ export type Bet = {
   b: number;
   qYes: number;
   qNo: number;
+  // Challenge market: null on regular markets.
+  challengeTargetDiscordId: string | null;
+  challengeAcceptBy: string | null;
 };
 
 export type CreateBetOptions = {
   resolverKind?: string;
   resolverArgs?: unknown;
   // Creator's initial probability estimate (0 < p < 1). Defaults to 0.5.
-  // Used to seed the LMSR share counts so the market doesn't start at
-  // an arbitrary 50/50 when the creator has a genuine prior.
   initialProb?: number;
+  // Challenge market: target Discord user + window (default 30 min).
+  challengeTargetDiscordId?: string;
+  challengeAcceptByMinutes?: number;
 };
 
 export function createBet(
@@ -49,6 +53,12 @@ export function createBet(
     options.resolverArgs === undefined ? null : JSON.stringify(options.resolverArgs);
   const initialProb = options.initialProb ?? 0.5;
   const { qYes, qNo } = lmsrInitShares(initialProb, LMSR_B);
+  const challengeAcceptBy = options.challengeTargetDiscordId
+    ? new Date(Date.now() + (options.challengeAcceptByMinutes ?? 30) * 60_000)
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\..+$/, "")
+    : null;
   const row = db
     .insert(bets)
     .values({
@@ -64,6 +74,8 @@ export function createBet(
       b: LMSR_B,
       qYes,
       qNo,
+      challengeTargetDiscordId: options.challengeTargetDiscordId ?? null,
+      challengeAcceptBy,
     })
     .returning({ id: bets.id })
     .get();
@@ -110,6 +122,8 @@ function toBet(row: BetRow): Bet {
     b: row.b,
     qYes: row.qYes,
     qNo: row.qNo,
+    challengeTargetDiscordId: row.challengeTargetDiscordId,
+    challengeAcceptBy: row.challengeAcceptBy,
   };
 }
 
@@ -173,6 +187,13 @@ export function getExpiredOpenBets(): Array<{
         eq(bets.status, "open"),
         isNotNull(bets.expiresAt),
         sql`${bets.expiresAt} <= datetime('now')`,
+        // Resolvers that manage their own deadline (resolve NO at expiry rather
+        // than cancel) are excluded from auto-cancel so they can fire one last
+        // check on the next tick and apply the NO verdict themselves.
+        sql`(resolver_kind IS NULL OR resolver_kind NOT IN (
+          'cs:rating-goal', 'cs:premier-milestone', 'cs:win-streak', 'cs:clutch-count',
+          'stock:price-above', 'stock:price-below', 'stock:pct-move'
+        ))`,
       ),
     )
     .all();

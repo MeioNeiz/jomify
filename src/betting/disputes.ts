@@ -13,6 +13,7 @@ import {
   ButtonStyle,
   type Interaction,
   type MessageEditOptions,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
@@ -175,21 +176,21 @@ registerComponent("dispute", async (interaction) => {
     if (!bet) {
       await interaction.reply({
         content: `Market #${betId} doesn't exist.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (bet.status !== "resolved") {
       await interaction.reply({
         content: "You can only dispute a resolved market.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (!isInvolvedInBet(betId, interaction.user.id)) {
       await interaction.reply({
         content: "Only people involved in this market can dispute it.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -197,7 +198,7 @@ registerComponent("dispute", async (interaction) => {
     if (existing) {
       await interaction.reply({
         content: `Market #${betId} already has an open dispute (#${existing.id}).`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -229,7 +230,10 @@ registerComponent("dispute", async (interaction) => {
     try {
       dispute = openDispute(betId, interaction.user.id, reason);
     } catch (err) {
-      await interaction.reply({ content: (err as Error).message, ephemeral: true });
+      await interaction.reply({
+        content: (err as Error).message,
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
@@ -241,7 +245,7 @@ registerComponent("dispute", async (interaction) => {
     if (!channelId) {
       await interaction.reply({
         content: `Dispute #${dispute.id} opened, but no channel to post the vote panel in.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -262,7 +266,7 @@ registerComponent("dispute", async (interaction) => {
     await refreshMarketMessage(interaction, betId);
     await interaction.reply({
       content: `Dispute #${dispute.id} opened. ${DISPUTE_COST} shekels deducted.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -275,14 +279,14 @@ registerComponent("dispute", async (interaction) => {
     if (!dispute || dispute.status !== "open") {
       await interaction.reply({
         content: "This dispute is closed.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (!isInvolvedInBet(dispute.betId, interaction.user.id)) {
       await interaction.reply({
         content: "Only people involved in this market can vote.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -304,13 +308,16 @@ registerComponent("dispute", async (interaction) => {
     const choice = interaction.values[0];
     const dispute = getDispute(disputeId);
     if (!dispute || dispute.status !== "open") {
-      await interaction.reply({ content: "This dispute is closed.", ephemeral: true });
+      await interaction.reply({
+        content: "This dispute is closed.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (!hasManageGuild(interaction)) {
       await interaction.reply({
         content: "Only server admins (Manage Server permission) can resolve disputes.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -328,12 +335,18 @@ registerComponent("dispute", async (interaction) => {
         cancelBet(dispute.betId);
         markDisputeResolved(disputeId, "cancel", null, interaction.user.id);
       } else {
-        await interaction.reply({ content: "Unknown ruling.", ephemeral: true });
+        await interaction.reply({
+          content: "Unknown ruling.",
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
     } catch (err) {
       log.error({ disputeId, err }, "Admin dispute resolve failed");
-      await interaction.reply({ content: (err as Error).message, ephemeral: true });
+      await interaction.reply({
+        content: (err as Error).message,
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
