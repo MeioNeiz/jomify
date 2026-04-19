@@ -2,11 +2,16 @@ import type {
   ChatInputCommandInteraction,
   InteractionEditReplyOptions,
 } from "discord.js";
+import { logError } from "../errors.js";
 import { fetchGuildProfiles } from "../helpers.js";
 import { LeetifyUnavailableError } from "../leetify/client.js";
 import type { LeetifyProfile } from "../leetify/types.js";
-import log from "../logger.js";
-import { markFirstReply, markLastReply, runWithMetrics } from "../metrics.js";
+import {
+  markCacheHit,
+  markFirstReply,
+  markLastReply,
+  runWithMetrics,
+} from "../metrics.js";
 import { getSteamId } from "../store.js";
 
 type CommandFn = (interaction: ChatInputCommandInteraction) => Promise<void>;
@@ -70,7 +75,10 @@ export function wrapCommand(fn: CommandFn, opts?: { defer?: boolean }): CommandF
         } catch (err) {
           const e = err as { code?: number; message?: string } | undefined;
           if (e?.code === 10062) return;
-          log.error({ cmd: interaction.commandName, err }, "Command error");
+          logError(`command:${interaction.commandName}`, err, {
+            userId: interaction.user.id,
+            guildId: interaction.guildId ?? undefined,
+          });
 
           let msg = "Something went wrong.";
           if (err instanceof LeetifyUnavailableError) {
@@ -154,6 +162,7 @@ export async function respondWithRevalidate<T>(
   const cached = opts.fetchCached();
   let shownKey: string | null = null;
 
+  markCacheHit(cached != null);
   if (cached) {
     const payload = opts.render(cached.data, {
       cached: true,
@@ -172,10 +181,7 @@ export async function respondWithRevalidate<T>(
     }
   } catch (err) {
     if (cached) {
-      log.warn(
-        { err, cmd: interaction.commandName },
-        "Revalidate failed \u2014 keeping cached reply",
-      );
+      logError("revalidate", err, { cmd: interaction.commandName }, "warn");
       return;
     }
     const msg = opts.missingMessage ?? "Leetify is down and no cached data is available.";

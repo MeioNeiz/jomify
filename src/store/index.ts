@@ -13,6 +13,7 @@ export {
   markOpponentAnalysed,
   trackApiCall,
 } from "./analysis.js";
+export { type ApiCallRow, saveApiCall } from "./apiCalls.js";
 export {
   type CarryRow,
   getCarryStats,
@@ -24,6 +25,7 @@ export {
   getNotifyChannel,
   setNotifyChannel,
 } from "./config.js";
+export { type ErrorRow, saveError } from "./errors.js";
 export {
   getLastLeaderboard,
   getLastLeaderboardWithNames,

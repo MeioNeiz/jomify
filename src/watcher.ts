@@ -7,6 +7,7 @@ import {
   sendToGuilds,
 } from "./alerts.js";
 import { config } from "./config.js";
+import { logError } from "./errors.js";
 import {
   getMatchDetails,
   getMatchHistory,
@@ -71,7 +72,7 @@ export async function backfillPlayer(steamId: string): Promise<number> {
     return saved;
   } catch (err) {
     if (err instanceof LeetifyNotFoundError) return 0;
-    log.error({ steamId, err }, "Backfill failed");
+    logError("watcher:backfill", err, { steamId });
     return 0;
   }
 }
@@ -137,7 +138,7 @@ async function checkPlayer(client: Client, steamId: string) {
             : currentPremier;
         if (rank != null) recordPremierAfter(match.id, steamId, rank);
       } catch (err) {
-        log.warn({ matchId: match.id, err }, "Failed to fetch match");
+        logError("watcher:match-details", err, { matchId: match.id }, "warn");
       }
     }
 
@@ -248,7 +249,7 @@ export function startWatcher(client: Client) {
       } catch (err) {
         if (err instanceof LeetifyUnavailableError) break;
         if (err instanceof LeetifyNotFoundError) continue;
-        log.warn({ steamId: id }, "Startup seed failed");
+        logError("watcher:startup-seed", err, { steamId: id }, "warn");
       }
       await new Promise((r) => setTimeout(r, MIN_GAP_MS));
     }
