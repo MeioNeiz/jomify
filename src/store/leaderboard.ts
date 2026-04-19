@@ -47,15 +47,17 @@ export function saveLeaderboardSnapshot(
   });
 }
 
+export type LeaderboardPrev = {
+  recordedAt: string | null;
+  entries: { steamId: string; premier: number | null }[];
+};
+
 /**
  * Returns the leaderboard snapshot strictly before the supplied cutoff.
  * Used by /leaderboard so the cached render can still show rank arrows
  * (compare cached-snapshot to the one before it) when Leetify is down.
  */
-export function getLeaderboardBefore(
-  guildId: string,
-  cutoff: string,
-): { steamId: string; premier: number | null }[] {
+export function getLeaderboardBefore(guildId: string, cutoff: string): LeaderboardPrev {
   const prev = db
     .select({ recordedAt: leaderboardSnapshots.recordedAt })
     .from(leaderboardSnapshots)
@@ -68,9 +70,9 @@ export function getLeaderboardBefore(
     .orderBy(desc(leaderboardSnapshots.recordedAt))
     .limit(1)
     .get();
-  if (!prev) return [];
+  if (!prev) return { recordedAt: null, entries: [] };
 
-  return db
+  const entries = db
     .select({
       steamId: leaderboardSnapshots.steamId,
       premier: leaderboardSnapshots.premier,
@@ -83,11 +85,10 @@ export function getLeaderboardBefore(
       ),
     )
     .all();
+  return { recordedAt: prev.recordedAt, entries };
 }
 
-export function getLastLeaderboard(
-  guildId: string,
-): { steamId: string; premier: number | null }[] {
+export function getLastLeaderboard(guildId: string): LeaderboardPrev {
   const latest = db
     .select({ recordedAt: leaderboardSnapshots.recordedAt })
     .from(leaderboardSnapshots)
@@ -95,9 +96,9 @@ export function getLastLeaderboard(
     .orderBy(desc(leaderboardSnapshots.recordedAt))
     .limit(1)
     .get();
-  if (!latest) return [];
+  if (!latest) return { recordedAt: null, entries: [] };
 
-  return db
+  const entries = db
     .select({
       steamId: leaderboardSnapshots.steamId,
       premier: leaderboardSnapshots.premier,
@@ -110,6 +111,7 @@ export function getLastLeaderboard(
       ),
     )
     .all();
+  return { recordedAt: latest.recordedAt, entries };
 }
 
 /** Complex: joins latest snapshot name per steam_id via window function. */

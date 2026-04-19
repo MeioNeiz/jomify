@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from "discord.js";
-import { fetchGuildProfiles, freshnessSuffix } from "../helpers.js";
+import { fetchGuildProfiles, freshnessSuffix, relTime } from "../helpers.js";
 import {
   getLastLeaderboard,
   getLastLeaderboardWithNames,
@@ -69,7 +69,7 @@ export const execute = wrapCommand(async (interaction) => {
     return;
   }
 
-  type View = { entries: Entry[]; prev: Prev[] };
+  type View = { entries: Entry[]; prev: Prev[]; prevRecordedAt: string | null };
 
   await respondWithRevalidate<View>(interaction, {
     fetchCached: () => {
@@ -84,15 +84,18 @@ export const execute = wrapCommand(async (interaction) => {
         .sort((a, b) => b.premier - a.premier);
       // Compare the cached snapshot to the one before it so rank arrows
       // still render when Leetify is down.
-      const prev = cached.recordedAt
+      const before = cached.recordedAt
         ? getLeaderboardBefore(guildId, cached.recordedAt)
-        : [];
-      return { data: { entries, prev }, snapshotAt: cached.recordedAt };
+        : { recordedAt: null, entries: [] };
+      return {
+        data: { entries, prev: before.entries, prevRecordedAt: before.recordedAt },
+        snapshotAt: cached.recordedAt,
+      };
     },
     fetchFresh: async () => {
       // Snapshot the previous leaderboard *before* we save the new one,
       // otherwise arrows would compare against ourselves.
-      const prev = getLastLeaderboard(guildId);
+      const before = getLastLeaderboard(guildId);
       const profiles = await fetchGuildProfiles(guildId);
       const entries: Entry[] = (profiles ?? [])
         .map((p) => ({
@@ -105,12 +108,20 @@ export const execute = wrapCommand(async (interaction) => {
         guildId,
         entries.map((e) => ({ steamId: e.steamId, premier: e.premier })),
       );
-      return { entries, prev };
+      return { entries, prev: before.entries, prevRecordedAt: before.recordedAt };
     },
     render: (v, { cached, snapshotAt }) => {
       const rows = buildRows(v.entries, v.prev);
+      // Make the "+58" self-describing: state exactly which two
+      // snapshots the deltas span. Stays hidden when no baseline
+      // exists (first run for this guild).
+      const arrowNote = v.prevRecordedAt
+        ? `\n-# Arrows show change since ${relTime(v.prevRecordedAt)}`
+        : "";
       const desc =
-        table(rows) + (cached ? freshnessSuffix(snapshotAt, "snapshot from") : "");
+        table(rows) +
+        arrowNote +
+        (cached ? freshnessSuffix(snapshotAt, "snapshot from") : "");
       return { embeds: [embed().setTitle("Leaderboard").setDescription(desc)] };
     },
     missingMessage:

@@ -147,8 +147,8 @@ describe("guild config", () => {
 });
 
 describe("leaderboard snapshots", () => {
-  test("no previous returns empty", () => {
-    expect(getLastLeaderboard(GUILD)).toEqual([]);
+  test("no previous returns empty with null recordedAt", () => {
+    expect(getLastLeaderboard(GUILD)).toEqual({ recordedAt: null, entries: [] });
   });
 
   test("saves and retrieves snapshot", () => {
@@ -158,11 +158,12 @@ describe("leaderboard snapshots", () => {
     ];
     saveLeaderboardSnapshot(GUILD, entries);
     const result = getLastLeaderboard(GUILD);
-    expect(result).toHaveLength(2);
-    expect(result.find((r) => r.steamId === STEAM)?.premier).toBe(15000);
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries.find((r) => r.steamId === STEAM)?.premier).toBe(15000);
+    expect(result.recordedAt).not.toBeNull();
   });
 
-  test("getLeaderboardBefore returns the snapshot prior to cutoff", () => {
+  test("getLeaderboardBefore returns the snapshot prior to cutoff + its timestamp", () => {
     // Three historical snapshots via raw SQL so we control recorded_at.
     db.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
@@ -177,16 +178,20 @@ describe("leaderboard snapshots", () => {
       [GUILD, STEAM, 15000, "2026-04-17 10:00:00"],
     );
     const prev = getLeaderboardBefore(GUILD, "2026-04-17 10:00:00");
-    expect(prev).toHaveLength(1);
-    expect(prev[0].premier).toBe(14500);
+    expect(prev.entries).toHaveLength(1);
+    expect(prev.entries[0].premier).toBe(14500);
+    expect(prev.recordedAt).toBe("2026-04-16 10:00:00");
   });
 
-  test("getLeaderboardBefore returns empty when no earlier snapshot exists", () => {
+  test("getLeaderboardBefore returns null recordedAt when no earlier snapshot exists", () => {
     db.run(
       "INSERT INTO leaderboard_snapshots (guild_id, steam_id, premier, recorded_at) VALUES (?, ?, ?, ?)",
       [GUILD, STEAM, 14000, "2026-04-17 10:00:00"],
     );
-    expect(getLeaderboardBefore(GUILD, "2026-04-17 10:00:00")).toEqual([]);
+    expect(getLeaderboardBefore(GUILD, "2026-04-17 10:00:00")).toEqual({
+      recordedAt: null,
+      entries: [],
+    });
   });
 });
 
