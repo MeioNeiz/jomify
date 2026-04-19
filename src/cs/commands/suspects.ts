@@ -1,6 +1,7 @@
 import {
   ActionRowBuilder,
   type InteractionEditReplyOptions,
+  MessageFlags,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
@@ -48,6 +49,7 @@ export const data = new SlashCommandBuilder()
 interface SuspectEntry {
   steamId: string;
   name: string;
+  isTracked: boolean;
   /** Raw local z-score composite from analyseStats — unweighted, for debug. */
   localScore: number;
   /**
@@ -101,6 +103,7 @@ function buildEntry(
   steamId: string,
   displayName: string,
   encounters: EncounterRow[],
+  isTracked: boolean,
 ): SuspectEntry | null {
   const history = getPlayerMatchStats(steamId, ANALYSIS_HISTORY);
   if (history.length < MIN_MATCHES_FOR_ANALYSIS) return null;
@@ -115,6 +118,7 @@ function buildEntry(
   return {
     steamId,
     name: displayName,
+    isTracked,
     localScore: score,
     score: adjustedScore,
     matchCount: history.length,
@@ -213,7 +217,10 @@ function buildPayload(
   phase: "refining" | "done" | "leetify-down",
 ): InteractionEditReplyOptions {
   const sorted = [...entries].sort((a, b) => b.score - a.score);
-  const shown = sorted.slice(0, MAX_SURFACED);
+  // Tracked squadmates: show at elevated (≥3). Strangers: sussy (≥5) only.
+  const surfaced = sorted.filter((e) => e.score >= (e.isTracked ? 3 : 5));
+  const hiddenClean = sorted.length - surfaced.length;
+  const shown = surfaced.slice(0, MAX_SURFACED);
   const flaggedCount = sorted.filter((e) => e.score >= 4).length;
 
   const topScore = sorted[0]?.score ?? 0;
@@ -236,6 +243,9 @@ function buildPayload(
   if (summary.hiddenCleanFriends > 0) {
     notes.push(`${summary.hiddenCleanFriends} clean squadmate(s) hidden`);
   }
+  if (hiddenClean > 0) {
+    notes.push(`${hiddenClean} clean stranger(s) hidden`);
+  }
   if (summary.skipped > 0) {
     notes.push(`${summary.skipped} player(s) with no stored matches skipped`);
   }
@@ -245,9 +255,9 @@ function buildPayload(
     (notes.length ? `\n-# ${notes.join(" \u00B7 ")}.` : "");
 
   const body = shown.length ? shown.map(renderLine).join("\n") : "_No candidates._";
-  const hidden = sorted.length - shown.length;
+  const truncated = surfaced.length - shown.length;
   const hiddenLine =
-    hidden > 0 ? `\n-# ${hidden} more hidden — try a shorter window.` : "";
+    truncated > 0 ? `\n-# ${truncated} more hidden — try a shorter window.` : "";
 
   const descParts = [header, "", body];
   if (hiddenLine) descParts.push(hiddenLine);
@@ -281,7 +291,12 @@ export const execute = wrapCommand(async (interaction) => {
   let hiddenCleanFriends = 0;
   for (const [otherId, rows] of groupByPlayer(encounters)) {
     if (otherId === steamId) continue;
-    const entry = buildEntry(otherId, rows[0]?.otherName ?? otherId, rows);
+    const entry = buildEntry(
+      otherId,
+      rows[0]?.otherName ?? otherId,
+      rows,
+      trackedSet.has(otherId),
+    );
     if (!entry) {
       skipped++;
       continue;
@@ -353,7 +368,7 @@ registerComponent("suspects", async (interaction) => {
   if (history.length < MIN_MATCHES_FOR_ANALYSIS) {
     await interaction.reply({
       content: "Not enough match history stored to analyse this player.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -382,5 +397,5 @@ registerComponent("suspects", async (interaction) => {
     .setTitle(name)
     .setURL(profileUrl)
     .setDescription(lines.join("\n"));
-  await interaction.reply({ embeds: [e], ephemeral: true });
+  await interaction.reply({ embeds: [e], flags: MessageFlags.Ephemeral });
 });

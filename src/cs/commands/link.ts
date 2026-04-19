@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  MessageFlags,
   SlashCommandBuilder,
 } from "discord.js";
 import { wrapCommand } from "../../commands/handler.js";
@@ -133,7 +134,7 @@ registerComponent("link", async (interaction) => {
   if (interaction.user.id !== invokerId) {
     await interaction.reply({
       content: "Only the person who ran `/link` can confirm.",
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }

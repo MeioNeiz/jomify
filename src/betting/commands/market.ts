@@ -5,6 +5,7 @@ import {
   type ChatInputCommandInteraction,
   type InteractionReplyOptions,
   type MessageEditOptions,
+  MessageFlags,
   ModalBuilder,
   SlashCommandBuilder,
   StringSelectMenuBuilder,
@@ -16,7 +17,9 @@ import { requireLinkedUser, wrapCommand } from "../../commands/handler.js";
 import { registerComponent } from "../../components.js";
 import { getTrackedPlayers } from "../../cs/store.js";
 import log from "../../logger.js";
+import { getActivityPings, setActivityPings } from "../../store.js";
 import { embed } from "../../ui.js";
+import { fetchGammaMarket } from "../resolvers/polymarket.js";
 // Side-effect import: registers the dispute component handlers. Kept
 // here (not commands/index.ts) so the market module owns the
 // surfaces that share its lifecycle.
@@ -104,7 +107,6 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
           .addChoices(
             { name: "win (yes if they win)", value: "win" },
-            { name: "rating above threshold", value: "rating-above" },
             { name: "kills above threshold", value: "kills-above" },
           ),
       )
@@ -138,6 +140,243 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("cs-rating-goal")
+      .setDescription(
+        "Market: will a player reach a target Leetify rating by the deadline?",
+      )
+      .addUserOption((opt) =>
+        opt
+          .setName("player")
+          .setDescription("Linked Discord user to watch (must be tracked in this server)")
+          .setRequired(true),
+      )
+      .addNumberOption((opt) =>
+        opt
+          .setName("threshold")
+          .setDescription("Target Leetify rating (e.g. 0.15)")
+          .setRequired(true),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Deadline — resolves NO if rating not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("cs-premier")
+      .setDescription(
+        "Market: will a player reach a target Premier rating by the deadline?",
+      )
+      .addUserOption((opt) =>
+        opt
+          .setName("player")
+          .setDescription("Linked Discord user to watch (must be tracked in this server)")
+          .setRequired(true),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("target")
+          .setDescription("Target Premier rating (e.g. 12000)")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(35000),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Deadline — resolves NO if rating not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("stock")
+      .setDescription(
+        "Auto-resolving market on a stock price target (requires ALPHA_VANTAGE_KEY)",
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("ticker")
+          .setDescription("Stock ticker symbol (e.g. AAPL, TSLA)")
+          .setRequired(true)
+          .setMaxLength(10),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("direction")
+          .setDescription("What has to happen for YES")
+          .setRequired(true)
+          .addChoices(
+            { name: "above price", value: "above" },
+            { name: "below price", value: "below" },
+            { name: "% move up", value: "pct-up" },
+            { name: "% move down", value: "pct-down" },
+          ),
+      )
+      .addNumberOption((opt) =>
+        opt
+          .setName("target")
+          .setDescription("Target price (e.g. 200) or % move (e.g. 5)")
+          .setRequired(true)
+          .setMinValue(0.01),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Deadline — resolves NO if not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("mirror")
+      .setDescription(
+        "Mirror an external prediction market (Polymarket / Kalshi) using shekels",
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("source")
+          .setDescription("Which platform to mirror")
+          .setRequired(true)
+          .addChoices(
+            { name: "Polymarket", value: "polymarket" },
+            { name: "Kalshi", value: "kalshi" },
+          ),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("ref")
+          .setDescription("Slug (Polymarket) or ticker (Kalshi)")
+          .setRequired(true),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("challenge")
+      .setDescription("Challenge another user to a head-to-head prediction market")
+      .addUserOption((opt) =>
+        opt.setName("user").setDescription("The user to challenge").setRequired(true),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("question")
+          .setDescription("What are you predicting on?")
+          .setRequired(true)
+          .setMaxLength(200),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("my-side")
+          .setDescription("Which side do you want?")
+          .setRequired(true)
+          .addChoices({ name: "YES", value: "yes" }, { name: "NO", value: "no" }),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("amount")
+          .setDescription("Shekels to stake now")
+          .setRequired(true)
+          .setMinValue(1),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Market closes after this long (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("config")
+      .setDescription("Configure market settings for this server (admin only)")
+      .addStringOption((opt) =>
+        opt
+          .setName("activity")
+          .setDescription("Post a ping when the first YES or NO position is taken")
+          .setRequired(true)
+          .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" }),
+      ),
   )
   .addSubcommand((sub) =>
     sub.setName("list").setDescription("Show open markets in this server"),
@@ -201,12 +440,37 @@ export function renderMarketView(
 
   descLines.push(`${MARKET_COPY.creatorPrefix} <@${bet.creatorDiscordId}>`);
 
+  if (bet.challengeTargetDiscordId) {
+    const acceptByUnix = bet.challengeAcceptBy
+      ? Math.floor(new Date(`${bet.challengeAcceptBy}Z`).getTime() / 1000)
+      : null;
+    if (acceptByUnix && Date.now() / 1000 < acceptByUnix) {
+      descLines.push(
+        `⚔️ <@${bet.challengeTargetDiscordId}> has been challenged — accept <t:${acceptByUnix}:R>.`,
+      );
+    } else {
+      descLines.push("Challenge expired — open to everyone.");
+    }
+  }
+
   if (bet.status === "open" && bet.resolverKind) {
     const resolver = lookup(bet.resolverKind);
     const args = bet.resolverArgs ? (JSON.parse(bet.resolverArgs) as unknown) : null;
     descLines.push(
       resolver?.describe?.(args) ?? "Auto-resolves when its upstream event lands.",
     );
+    if (bet.resolverKind === "external:polymarket" && args) {
+      const slug = (args as { slug?: string }).slug;
+      if (slug)
+        descLines.push(`[View on Polymarket](https://polymarket.com/event/${slug})`);
+    }
+    if (bet.resolverKind === "external:kalshi" && args) {
+      const ticker = (args as { ticker?: string }).ticker;
+      if (ticker)
+        descLines.push(
+          `[View on Kalshi](https://kalshi.com/markets/${ticker.toLowerCase()})`,
+        );
+    }
   }
   if (bet.status === "open" && bet.expiresAt) {
     const unix = Math.floor(new Date(`${bet.expiresAt}Z`).getTime() / 1000);
@@ -305,6 +569,41 @@ async function handleCreate(interaction: ChatInputCommandInteraction, guildId: s
   }
 }
 
+async function handleCsRatingGoal(
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+) {
+  const resolved = await requireLinkedUser(interaction, "player");
+  if (!resolved) return;
+  const threshold = interaction.options.getNumber("threshold", true);
+
+  const tracked = new Set(getTrackedPlayers(guildId));
+  if (!tracked.has(resolved.steamId)) {
+    await interaction.editReply(
+      `${resolved.label} isn't tracked here. Add them with \`/track\` first.`,
+    );
+    return;
+  }
+
+  const question = `Will ${resolved.label} hit a Leetify rating ≥ ${threshold.toFixed(2)} before the deadline?`;
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    resolverKind: "cs:rating-goal",
+    resolverArgs: { steamId: resolved.steamId, threshold },
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
 const CS_NEXT_MATCH_KIND = {
   win: "cs:next-match-win",
   "rating-above": "cs:next-match-rating-above",
@@ -368,6 +667,193 @@ async function handleCsNextMatch(
   }
 }
 
+async function handleMirror(interaction: ChatInputCommandInteraction, guildId: string) {
+  const source = interaction.options.getString("source", true);
+  const ref = interaction.options.getString("ref", true).trim();
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+
+  let question: string;
+  let resolverKind: string;
+  let resolverArgs: unknown;
+
+  if (source === "polymarket") {
+    const upstream = await fetchGammaMarket(ref);
+    if (!upstream) {
+      await interaction.editReply(
+        `Couldn't fetch Polymarket slug \`${ref}\`. Check the slug from the market URL and try again.`,
+      );
+      return;
+    }
+    if (upstream.resolvedOutcome && upstream.resolvedOutcome !== "Unresolved") {
+      await interaction.editReply(
+        `That market has already resolved **${upstream.resolvedOutcome}** — can't mirror it.`,
+      );
+      return;
+    }
+    question = upstream.question ?? `Mirror of polymarket.com/event/${ref}`;
+    resolverKind = "external:polymarket";
+    resolverArgs = { slug: ref };
+  } else if (source === "kalshi") {
+    question = `Mirror of Kalshi market ${ref.toUpperCase()}`;
+    resolverKind = "external:kalshi";
+    resolverArgs = { ticker: ref.toUpperCase() };
+  } else {
+    await interaction.editReply(
+      "Unknown source — only `polymarket` and `kalshi` are supported.",
+    );
+    return;
+  }
+
+  const id = createBet(guildId, interaction.user.id, question, null, {
+    resolverKind,
+    resolverArgs,
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
+async function handleStock(interaction: ChatInputCommandInteraction, guildId: string) {
+  const ticker = interaction.options.getString("ticker", true).toUpperCase().trim();
+  const direction = interaction.options.getString("direction", true);
+  const target = interaction.options.getNumber("target", true);
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const kindMap: Record<string, string> = {
+    above: "stock:price-above",
+    below: "stock:price-below",
+    "pct-up": "stock:pct-move",
+    "pct-down": "stock:pct-move",
+  };
+  const resolverKind = kindMap[direction];
+  if (!resolverKind) {
+    await interaction.editReply(`Unknown direction: ${direction}`);
+    return;
+  }
+
+  const resolverArgs =
+    resolverKind === "stock:pct-move"
+      ? { ticker, pct: target, direction: direction === "pct-up" ? "up" : "down" }
+      : { ticker, target };
+
+  const question = (() => {
+    if (direction === "above")
+      return `Will ${ticker} close above $${target.toFixed(2)} before the deadline?`;
+    if (direction === "below")
+      return `Will ${ticker} fall below $${target.toFixed(2)} before the deadline?`;
+    const dir = direction === "pct-up" ? "up" : "down";
+    return `Will ${ticker} move ${dir} ≥ ${target}% before the deadline?`;
+  })();
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    resolverKind,
+    resolverArgs,
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
+async function handleChallenge(
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+) {
+  const targetUser = interaction.options.getUser("user", true);
+  if (targetUser.id === interaction.user.id) {
+    await interaction.editReply("You can't challenge yourself.");
+    return;
+  }
+  const question = interaction.options.getString("question", true);
+  const mySide = interaction.options.getString("my-side", true) as Outcome;
+  const amount = interaction.options.getInteger("amount", true);
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const balance = getBalance(interaction.user.id);
+  if (amount > balance) {
+    await interaction.editReply(
+      `You only have **${balance}** shekels — not enough to stake **${amount}**.`,
+    );
+    return;
+  }
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    challengeTargetDiscordId: targetUser.id,
+  });
+  try {
+    placeWager(id, interaction.user.id, mySide, amount);
+  } catch (err) {
+    cancelBet(id);
+    await interaction.editReply((err as Error).message);
+    return;
+  }
+
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
+async function handleConfig(interaction: ChatInputCommandInteraction, guildId: string) {
+  if (!interaction.memberPermissions?.has("ManageGuild")) {
+    await interaction.editReply("Only admins can change market config.");
+    return;
+  }
+  const activity = interaction.options.getString("activity", true);
+  setActivityPings(guildId, activity === "on");
+  await interaction.editReply(`Activity pings **${activity}**.`);
+}
+
+async function handleCsPremier(
+  interaction: ChatInputCommandInteraction,
+  guildId: string,
+) {
+  const resolved = await requireLinkedUser(interaction, "player");
+  if (!resolved) return;
+  const target = interaction.options.getInteger("target", true);
+
+  const tracked = new Set(getTrackedPlayers(guildId));
+  if (!tracked.has(resolved.steamId)) {
+    await interaction.editReply(
+      `${resolved.label} isn't tracked here. Add them with \`/track\` first.`,
+    );
+    return;
+  }
+
+  const question = `Will ${resolved.label} reach Premier rating ${target.toLocaleString()} before the deadline?`;
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    resolverKind: "cs:premier-milestone",
+    resolverArgs: { steamId: resolved.steamId, target },
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
 async function handleList(interaction: ChatInputCommandInteraction, guildId: string) {
   const open = listOpenBets(guildId);
   if (!open.length) {
@@ -411,6 +897,12 @@ export const execute = wrapCommand(async (interaction) => {
   }
   if (sub === "create") await handleCreate(interaction, guildId);
   else if (sub === "cs-next-match") await handleCsNextMatch(interaction, guildId);
+  else if (sub === "cs-rating-goal") await handleCsRatingGoal(interaction, guildId);
+  else if (sub === "cs-premier") await handleCsPremier(interaction, guildId);
+  else if (sub === "mirror") await handleMirror(interaction, guildId);
+  else if (sub === "stock") await handleStock(interaction, guildId);
+  else if (sub === "challenge") await handleChallenge(interaction, guildId);
+  else if (sub === "config") await handleConfig(interaction, guildId);
   else if (sub === "list") await handleList(interaction, guildId);
   else await interaction.editReply(`Unknown subcommand: ${sub}`);
 });
@@ -418,10 +910,11 @@ export const execute = wrapCommand(async (interaction) => {
 // ── Component handlers ───────────────────────────────────────────────
 //
 // customId grammar:
-//   market:wager:<id>:<outcome>    — button, opens amount modal
-//   market:modal:<id>:<outcome>    — modal submit, places position
-//   market:resolve:<id>:<outcome>  — button, creator-only resolve
-//   market:pick                    — select menu, posts market view
+//   market:wager:<id>:<outcome>             — button, opens amount modal
+//   market:modal:<id>:<outcome>             — modal submit, places position
+//   market:resolve:<id>:<outcome>           — button, creator-only resolve
+//   market:pick                             — select menu, posts market view
+//   market:counter:<id>:<side>:<amount>     — activity ping counter button
 registerComponent("market", async (interaction) => {
   const parts = interaction.customId.split(":");
   const action = parts[1];
@@ -438,7 +931,10 @@ registerComponent("market", async (interaction) => {
     const outcome = parts[3] as Outcome;
     const bet = getBet(betId);
     if (!bet || bet.status !== "open") {
-      await interaction.reply({ content: "This market is closed.", ephemeral: true });
+      await interaction.reply({
+        content: "This market is closed.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     const balance = getBalance(interaction.user.id);
@@ -473,7 +969,7 @@ registerComponent("market", async (interaction) => {
     if (!Number.isInteger(amount) || amount <= 0) {
       await interaction.reply({
         content: `\`${raw}\` isn't a positive whole number.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -492,10 +988,18 @@ registerComponent("market", async (interaction) => {
           )
         : null;
 
+    // Check before placing: is this the first wager of this outcome?
+    const isFirstOfOutcome =
+      betBefore?.status === "open" &&
+      !getWagersForBet(betId).some((w) => w.outcome === outcome);
+
     try {
       placeWager(betId, interaction.user.id, outcome, amount);
     } catch (err) {
-      await interaction.reply({ content: (err as Error).message, ephemeral: true });
+      await interaction.reply({
+        content: (err as Error).message,
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
 
@@ -510,8 +1014,67 @@ registerComponent("market", async (interaction) => {
         : "";
     await interaction.followUp({
       content: `Staked **${amount}** on **${outcome}**${payoutStr}. Balance: **${balance}**.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
+
+    // Activity ping: first YES or NO on this market.
+    if (isFirstOfOutcome && betBefore?.channelId && betBefore.guildId) {
+      if (getActivityPings(betBefore.guildId)) {
+        const oppSide = outcome === "yes" ? "no" : "yes";
+        const counterRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          button(`market:counter:${betId}:${outcome}:${amount}`, {
+            style: ButtonStyle.Secondary,
+            label: `Counter ${oppSide.toUpperCase()}`,
+            emoji: "⚔️",
+          }),
+        );
+        try {
+          const ch = await interaction.client.channels.fetch(betBefore.channelId);
+          if (ch?.isTextBased() && "send" in ch) {
+            await ch.send({
+              content: `<@${interaction.user.id}> took the first **${outcome.toUpperCase()}** on market #${betId} — who's countering?`,
+              components: [counterRow],
+            });
+          }
+        } catch (err) {
+          log.warn({ err, betId }, "Couldn't send activity ping");
+        }
+      }
+    }
+    return;
+  }
+
+  if (action === "counter" && interaction.isButton()) {
+    const betId = Number(parts[2]);
+    const firstSide = parts[3] as Outcome;
+    const firstAmount = Number(parts[4]);
+    const oppSide: Outcome = firstSide === "yes" ? "no" : "yes";
+    const bet = getBet(betId);
+    if (!bet || bet.status !== "open") {
+      await interaction.reply({
+        content: "This market is closed.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const balance = getBalance(interaction.user.id);
+    const modal = new ModalBuilder()
+      .setCustomId(`market:modal:${betId}:${oppSide}`)
+      .setTitle(`Counter ${oppSide.toUpperCase()} #${betId}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("amount")
+            .setLabel(`${CURRENCY.label} to stake (you have ${balance})`)
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue(Number.isFinite(firstAmount) ? String(firstAmount) : "")
+            .setPlaceholder("e.g. 10")
+            .setMinLength(1)
+            .setMaxLength(6),
+        ),
+      );
+    await interaction.showModal(modal);
     return;
   }
 
@@ -522,35 +1085,38 @@ registerComponent("market", async (interaction) => {
     if (!bet) {
       await interaction.reply({
         content: `Market #${betId} doesn't exist.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (bet.resolverKind) {
       await interaction.reply({
         content: "This market auto-resolves — admins can step in via the dispute flow.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (bet.creatorDiscordId !== interaction.user.id) {
       await interaction.reply({
         content: "Only the creator can resolve this market.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (bet.status !== "open") {
       await interaction.reply({
         content: `Market #${betId} is already ${bet.status}.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     try {
       resolveBet(betId, outcome);
     } catch (err) {
-      await interaction.reply({ content: (err as Error).message, ephemeral: true });
+      await interaction.reply({
+        content: (err as Error).message,
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     await interaction.update(renderMarketView(betId));
@@ -561,7 +1127,10 @@ registerComponent("market", async (interaction) => {
     const betId = Number(parts[2]);
     const bet = getBet(betId);
     if (!bet || bet.status !== "open") {
-      await interaction.reply({ content: "This market is closed.", ephemeral: true });
+      await interaction.reply({
+        content: "This market is closed.",
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (
@@ -570,7 +1139,7 @@ registerComponent("market", async (interaction) => {
     ) {
       await interaction.reply({
         content: "Only the creator or an admin can extend this market.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -585,7 +1154,7 @@ registerComponent("market", async (interaction) => {
     await interaction.reply({
       content: "Pick how far to push the deadline:",
       components: [row],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }

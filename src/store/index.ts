@@ -1,7 +1,9 @@
 export { type ApiCallRow, saveApiCall } from "./apiCalls.js";
 export {
+  getActivityPings,
   getAllGuildIds,
   getNotifyChannel,
+  setActivityPings,
   setNotifyChannel,
 } from "./config.js";
 export { type ErrorRow, saveError } from "./errors.js";

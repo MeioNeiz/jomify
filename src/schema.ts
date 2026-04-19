@@ -11,6 +11,7 @@ export const linkedAccounts = sqliteTable("linked_accounts", {
 export const guildConfig = sqliteTable("guild_config", {
   guildId: text("guild_id").primaryKey(),
   notifyChannelId: text("notify_channel_id"),
+  activityPings: integer("activity_pings").notNull().default(0),
 });
 
 // Per-invocation timing + API-call attribution for slash commands.

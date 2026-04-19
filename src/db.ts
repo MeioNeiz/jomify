@@ -54,6 +54,7 @@ sqlite.run(`
 for (const col of [
   "ALTER TABLE metrics ADD COLUMN options TEXT",
   "ALTER TABLE metrics ADD COLUMN cache_hit INTEGER",
+  "ALTER TABLE guild_config ADD COLUMN activity_pings INTEGER NOT NULL DEFAULT 0",
 ]) {
   try {
     sqlite.run(col);

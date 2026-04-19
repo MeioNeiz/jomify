@@ -431,6 +431,36 @@ export function getPlayerMatchStats(steamId: string, limit = 20): MatchRow[] {
  * Returns null until a qualifying match is saved — drives the betting
  * resolver's "first match after market opened" decision.
  */
+/** First match after sinceIso where the player's Leetify rating >= threshold. */
+export function getMatchWithRatingAbove(
+  steamId: string,
+  sinceIso: string,
+  threshold: number,
+): MatchRow | null {
+  const row = sqlite
+    .query(
+      `SELECT
+         ms.match_id   AS matchId,
+         m.map_name    AS mapName,
+         m.finished_at AS finishedAt,
+         ms.raw        AS raw
+       FROM match_stats ms
+       JOIN matches m ON m.match_id = ms.match_id
+       WHERE ms.steam_id = ?
+         AND datetime(m.finished_at) > datetime(?)
+         AND CAST(json_extract(ms.raw, '$.leetify_rating') AS REAL) >= ?
+       ORDER BY m.finished_at ASC
+       LIMIT 1`,
+    )
+    .get(steamId, sinceIso, threshold) as {
+    matchId: string;
+    mapName: string;
+    finishedAt: string;
+    raw: string;
+  } | null;
+  return row ? toMatchRow(row) : null;
+}
+
 export function getFirstMatchAfter(steamId: string, sinceIso: string): MatchRow | null {
   const row = sqlite
     .query(
@@ -453,6 +483,68 @@ export function getFirstMatchAfter(steamId: string, sinceIso: string): MatchRow 
     raw: string;
   } | null;
   return row ? toMatchRow(row) : null;
+}
+
+/** First match after sinceIso where premier_after >= target. */
+export function getMatchWithPremierAbove(
+  steamId: string,
+  sinceIso: string,
+  target: number,
+): { mapName: string; premier: number } | null {
+  const row = sqlite
+    .query(
+      `SELECT m.map_name AS mapName, ms.premier_after AS premier
+       FROM match_stats ms
+       JOIN matches m ON m.match_id = ms.match_id
+       WHERE ms.steam_id = ?
+         AND datetime(m.finished_at) > datetime(?)
+         AND ms.premier_after IS NOT NULL
+         AND ms.premier_after >= ?
+       ORDER BY m.finished_at ASC
+       LIMIT 1`,
+    )
+    .get(steamId, sinceIso, target) as { mapName: string; premier: number } | null;
+  return row;
+}
+
+/** Current consecutive win streak from the most recent match backwards, only
+ *  counting matches that finished strictly after sinceIso. Returns 0 when the
+ *  most recent qualifying match is not a win, or when there are no matches. */
+export function getCurrentWinStreakAfter(steamId: string, sinceIso: string): number {
+  const row = sqlite
+    .query(
+      `SELECT
+         COALESCE(
+           MIN(CASE WHEN is_win = 0 THEN rn END) - 1,
+           COUNT(*)
+         ) AS streak
+       FROM (
+         SELECT
+           CASE WHEN ms.rounds_won > ms.rounds_lost THEN 1 ELSE 0 END AS is_win,
+           ROW_NUMBER() OVER (ORDER BY m.finished_at DESC) AS rn
+         FROM match_stats ms
+         JOIN matches m ON m.match_id = ms.match_id
+         WHERE ms.steam_id = ? AND datetime(m.finished_at) > datetime(?)
+       )`,
+    )
+    .get(steamId, sinceIso) as { streak: number } | null;
+  return row?.streak ?? 0;
+}
+
+/** Total multikill clutch plays (3k, 4k, 5k) after sinceIso. */
+export function getClutchCountAfter(steamId: string, sinceIso: string): number {
+  const row = sqlite
+    .query(
+      `SELECT
+         COALESCE(SUM(ms.multi3k), 0) +
+         COALESCE(SUM(ms.multi4k), 0) +
+         COALESCE(SUM(ms.multi5k), 0) AS clutch_count
+       FROM match_stats ms
+       JOIN matches m ON m.match_id = ms.match_id
+       WHERE ms.steam_id = ? AND datetime(m.finished_at) > datetime(?)`,
+    )
+    .get(steamId, sinceIso) as { clutch_count: number } | null;
+  return row?.clutch_count ?? 0;
 }
 
 /** Get matches within the last N hours. */

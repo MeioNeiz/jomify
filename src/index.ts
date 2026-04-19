@@ -9,6 +9,13 @@ import "./betting/listeners/cs-match-completed.js";
 // land before the watcher starts so the registry is populated when the
 // first tick fires.
 import "./betting/resolvers/cs-next-match.js";
+import "./betting/resolvers/cs-rating-goal.js";
+import "./betting/resolvers/cs-premier-milestone.js";
+import "./betting/resolvers/cs-win-streak.js";
+import "./betting/resolvers/cs-clutch-count.js";
+import "./betting/resolvers/stock.js";
+import "./betting/resolvers/polymarket.js";
+import "./betting/resolvers/kalshi.js";
 import { startExpiryWatcher } from "./betting/expiry.js";
 import { startResolverWatcher } from "./betting/resolvers/watcher.js";
 import { config } from "./config.js";

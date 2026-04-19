@@ -10,6 +10,7 @@
 // verdicts.
 import type { Client, TextChannel } from "discord.js";
 import { logError } from "../../errors.js";
+import { on } from "../../events.js";
 import log from "../../logger.js";
 import { renderMarketView } from "../commands/market.js";
 import {
@@ -92,6 +93,31 @@ async function checkOne(
   await applyVerdict(client, betId, verdict);
 }
 
+/** Immediately tick only the resolver-backed bets whose resolver_args
+ *  reference the given steamId. Called on the cs:match-completed fast-path
+ *  so resolution fires within the same event loop tick as the match save,
+ *  rather than waiting up to 60 s for the next scheduled poll. */
+async function tickForSteamId(client: Client, steamId: string): Promise<void> {
+  const open = getOpenResolverBets();
+  for (const bet of open) {
+    if (!bet.resolverArgs) continue;
+    let args: unknown;
+    try {
+      args = JSON.parse(bet.resolverArgs);
+    } catch {
+      continue;
+    }
+    if ((args as { steamId?: string })?.steamId !== steamId) continue;
+    const resolver = bet.resolverKind ? lookup(bet.resolverKind) : null;
+    if (!resolver) continue;
+    try {
+      await checkOne(client, bet.id, resolver);
+    } catch (err) {
+      logError(`resolver:${bet.resolverKind}`, err, { betId: bet.id }, "warn");
+    }
+  }
+}
+
 export async function tick(client: Client): Promise<void> {
   const open = getOpenResolverBets();
   for (const bet of open) {
@@ -114,6 +140,13 @@ export async function tick(client: Client): Promise<void> {
 }
 
 export function startResolverWatcher(client: Client): void {
+  // Fast-path: tick bets for a player the moment their match is saved so
+  // resolution lands within the same cycle rather than waiting for the poll.
+  on("cs:match-completed", (e) => {
+    tickForSteamId(client, e.steamId).catch((err) =>
+      log.error({ err }, "Fast-path resolver tick failed"),
+    );
+  });
   setInterval(() => {
     tick(client).catch((err) => log.error({ err }, "Resolver tick failed"));
   }, TICK_MS);
