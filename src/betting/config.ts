@@ -48,3 +48,25 @@ export const WEEKLY_ARCHIVE_RANKS = 5;
 // even on a successful overturn. Keeps drive-by reporting cheap
 // enough to stay useful but not free.
 export const DISPUTE_COST = 5;
+
+// LMSR market parameters.
+//
+// LMSR_B controls liquidity depth. The market maker's maximum loss per
+// binary market is bounded at LMSR_B × ln(2) ≈ 0.693 × LMSR_B shekels
+// regardless of how participants bet. At 30, worst-case house cost ≈ 20.8
+// shekels/market. Larger b → smoother price curve, higher house exposure.
+//
+// LMSR_RAKE is deducted from winning shares at resolution (e.g. 0.02 = 2%).
+// Over a market's lifetime it offsets a portion of the house subsidy.
+//
+// DEFAULT_EXPIRY_HOURS: markets auto-cancel after this long if not manually
+// resolved. Keeps the market list tidy; creators can override at creation.
+export const LMSR_B = 30;
+export const LMSR_RAKE = 0.02;
+export const DEFAULT_EXPIRY_HOURS = 72;
+
+// Auto-extend: when a wager lands within AUTO_EXTEND_THRESHOLD_HOURS of
+// the deadline, push it forward by AUTO_EXTEND_ON_BET_HOURS from now.
+// Only fires on markets that already have an expiry set.
+export const AUTO_EXTEND_THRESHOLD_HOURS = 12;
+export const AUTO_EXTEND_ON_BET_HOURS = 24;

@@ -63,6 +63,11 @@ export const MARKET_BUTTONS = {
     style: ButtonStyle.Secondary,
     label: "Resolve: No wins",
   },
+  extend: {
+    style: ButtonStyle.Secondary,
+    emoji: "\u23F0", // ⏰
+    label: "Extend",
+  },
 } as const;
 
 export const MARKET_DURATIONS: { name: string; hours: number }[] = [

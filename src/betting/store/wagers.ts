@@ -1,6 +1,11 @@
 import { and, eq } from "drizzle-orm";
-import { STARTING_BALANCE } from "../config.js";
+import {
+  AUTO_EXTEND_ON_BET_HOURS,
+  AUTO_EXTEND_THRESHOLD_HOURS,
+  STARTING_BALANCE,
+} from "../config.js";
 import db from "../db.js";
+import { lmsrBuyShares } from "../lmsr.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
 import type { Outcome } from "./bets.js";
 
@@ -9,6 +14,7 @@ export type Wager = {
   discordId: string;
   outcome: Outcome;
   amount: number;
+  shares: number; // LMSR shares; 0 on legacy pari-mutuel wagers
   placedAt: string;
 };
 
@@ -20,6 +26,7 @@ export function getWagersForBet(betId: number): Wager[] {
     discordId: r.discordId,
     outcome: r.outcome as Outcome,
     amount: r.amount,
+    shares: r.shares,
     placedAt: r.placedAt,
   }));
 }
@@ -83,6 +90,33 @@ export function placeWager(
     tx.insert(ledger)
       .values({ discordId, delta: -amount, reason: "bet-placed", ref: String(betId) })
       .run();
-    tx.insert(wagers).values({ betId, discordId, outcome, amount }).run();
+
+    // Compute LMSR shares and update running market state.
+    const shares =
+      bet.b > 0 ? lmsrBuyShares(bet.qYes, bet.qNo, bet.b, amount, outcome) : 0;
+
+    // Build the bets update: always update LMSR state if needed, and
+    // auto-extend the deadline when a wager lands close to expiry.
+    const betsUpdate: Record<string, unknown> = {};
+    if (bet.b > 0) {
+      betsUpdate.qYes = outcome === "yes" ? bet.qYes + shares : bet.qYes;
+      betsUpdate.qNo = outcome === "no" ? bet.qNo + shares : bet.qNo;
+    }
+    if (bet.expiresAt) {
+      const expiresMs = new Date(`${bet.expiresAt}Z`).getTime();
+      const thresholdMs = Date.now() + AUTO_EXTEND_THRESHOLD_HOURS * 3_600_000;
+      if (expiresMs < thresholdMs) {
+        const extended = new Date(Date.now() + AUTO_EXTEND_ON_BET_HOURS * 3_600_000)
+          .toISOString()
+          .replace("T", " ")
+          .replace(/\..+$/, "");
+        betsUpdate.expiresAt = extended;
+      }
+    }
+    if (Object.keys(betsUpdate).length > 0) {
+      tx.update(bets).set(betsUpdate).where(eq(bets.id, betId)).run();
+    }
+
+    tx.insert(wagers).values({ betId, discordId, outcome, amount, shares }).run();
   });
 }
