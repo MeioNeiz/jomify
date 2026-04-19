@@ -117,20 +117,21 @@ function buildEntry(
 }
 
 /**
- * Map Leetify lifetime stats into a score bump. Thresholds picked so
- * a typical competitive player stays at 0, clear outliers add 1-2 per
- * stat, and extreme values compound. Non-authoritative — still just
- * z-score territory, but over lifetime rather than 1-match noise.
+ * Map Leetify lifetime stats into a score bump. Leetify returns these
+ * on a 0-100 percentage scale (not 0-1 decimals) — verified against
+ * /v3/profile output: a player at ~80 aim / 20% HS / 9cm preaim is
+ * solid but not remarkable, a sus outlier is ≥90 aim / ≥40% HS / <3cm
+ * preaim. Non-authoritative; scan signal, not verdict.
  */
 function profileBump(aim: number, hs: number, preaim: number): number {
   let bump = 0;
-  if (aim > 2.0) bump += 2;
-  else if (aim > 1.5) bump += 1;
-  if (hs > 0.35) bump += 2;
-  else if (hs > 0.28) bump += 1;
+  if (aim >= 90) bump += 2;
+  else if (aim >= 80) bump += 1;
+  if (hs >= 40) bump += 2;
+  else if (hs >= 30) bump += 1;
   // Preaim in cm; lower is better. 0 usually means "no data".
-  if (preaim > 0 && preaim < 2.0) bump += 2;
-  else if (preaim > 0 && preaim < 3.0) bump += 1;
+  if (preaim > 0 && preaim < 3.0) bump += 2;
+  else if (preaim > 0 && preaim < 5.0) bump += 1;
   return bump;
 }
 
@@ -165,8 +166,8 @@ function renderLine(s: SuspectEntry): string {
     `${v.icon} [${s.name}](${profileUrl}) **${s.score.toFixed(1)}**` +
     ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`;
   if (!s.profile) return main;
-  const aim = s.profile.aim.toFixed(2);
-  const hs = `${(s.profile.hs * 100).toFixed(0)}%`;
+  const aim = s.profile.aim.toFixed(1);
+  const hs = `${s.profile.hs.toFixed(1)}%`;
   const preaim = `${s.profile.preaim.toFixed(1)}cm`;
   return `${main}\n-# Leetify lifetime: aim ${aim} \u00B7 HS ${hs} \u00B7 preaim ${preaim}`;
 }
