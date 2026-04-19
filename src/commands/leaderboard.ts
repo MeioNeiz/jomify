@@ -111,15 +111,18 @@ export const execute = wrapCommand(async (interaction) => {
       );
       return { entries, prev: before.entries, prevRecordedAt: before.recordedAt };
     },
-    render: (v) => {
+    render: (v, { cached, snapshotAt }) => {
       const rows = buildRows(v.entries, v.prev);
-      // Only two bits of context worth showing: what the arrows are
-      // relative to, and whether Leetify's currently unavailable
-      // (which implies the data is stale). Snapshot freshness is
-      // redundant with both.
+      // Three optional bits; each only shows when it carries signal:
+      //  - arrows-since: always meaningful when we have a baseline.
+      //  - snapshot age: only when the data is cached (stale).
+      //  - Leetify unavailable: only while the breaker is tripped.
       const bits: string[] = [];
       if (v.prevRecordedAt) {
         bits.push(`arrows since ${relTime(v.prevRecordedAt)}`);
+      }
+      if (cached && snapshotAt) {
+        bits.push(`data from ${relTime(snapshotAt)}`);
       }
       if (isLeetifyCircuitOpen()) {
         bits.push("Leetify unavailable");
