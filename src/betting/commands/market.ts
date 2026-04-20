@@ -15,7 +15,7 @@ import {
 } from "discord.js";
 import { requireLinkedUser, wrapCommand } from "../../commands/handler.js";
 import { registerComponent } from "../../components.js";
-import { getTrackedPlayers } from "../../cs/store.js";
+import { getLatestSnapshot, getSteamId, getTrackedPlayers } from "../../cs/store.js";
 import log from "../../logger.js";
 import { getActivityPings, setActivityPings } from "../../store.js";
 import { embed } from "../../ui.js";
@@ -233,6 +233,74 @@ export const data = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub
+      .setName("first-to")
+      .setDescription(
+        "Market: who'll be first to hit a CS milestone — scope your own server",
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("stat")
+          .setDescription("Which milestone decides yes")
+          .setRequired(true)
+          .addChoices(
+            { name: "ace (first 5k in a match)", value: "ace" },
+            { name: "thirty-bomb (30+ kills in a match)", value: "thirty-bomb" },
+            { name: "win-streak (N wins in a row)", value: "win-streak" },
+          ),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("scope")
+          .setDescription("Who counts — any tracked player or a named few")
+          .setRequired(true)
+          .addChoices(
+            { name: "guild (any tracked player)", value: "guild" },
+            { name: "list (named players only)", value: "list" },
+          ),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("players")
+          .setDescription(
+            "Required when scope=list: @mention each player (space or comma separated)",
+          )
+          .setMaxLength(500),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("threshold")
+          .setDescription("Required for win-streak: how many wins in a row (≥ 2)")
+          .setMinValue(2)
+          .setMaxValue(20),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Deadline — refunds both sides if no one hits it (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
       .setName("stock")
       .setDescription(
         "Auto-resolving market on a stock price target (requires ALPHA_VANTAGE_KEY)",
@@ -262,6 +330,62 @@ export const data = new SlashCommandBuilder()
           .setDescription("Target price (e.g. 200) or % move (e.g. 5)")
           .setRequired(true)
           .setMinValue(0.01),
+      )
+      .addIntegerOption((opt) =>
+        opt
+          .setName("probability")
+          .setDescription("Your starting estimate for YES % (default: 50)")
+          .addChoices(
+            { name: "10%", value: 10 },
+            { name: "20%", value: 20 },
+            { name: "30%", value: 30 },
+            { name: "40%", value: 40 },
+            { name: "50% (even odds)", value: 50 },
+            { name: "60%", value: 60 },
+            { name: "70%", value: 70 },
+            { name: "80%", value: 80 },
+            { name: "90%", value: 90 },
+          ),
+      )
+      .addStringOption((opt) => {
+        opt
+          .setName("duration")
+          .setDescription(
+            `Deadline — resolves NO if not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
+          );
+        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      }),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("crypto")
+      .setDescription("Auto-resolving market on a crypto price target (via CoinGecko)")
+      .addStringOption((opt) =>
+        opt
+          .setName("symbol")
+          .setDescription("Crypto symbol (e.g. BTC, ETH, SOL, DOGE)")
+          .setRequired(true)
+          .setMaxLength(15),
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName("direction")
+          .setDescription("What has to happen for YES")
+          .setRequired(true)
+          .addChoices(
+            { name: "above price", value: "above" },
+            { name: "below price", value: "below" },
+            { name: "% move up", value: "pct-up" },
+            { name: "% move down", value: "pct-down" },
+          ),
+      )
+      .addNumberOption((opt) =>
+        opt
+          .setName("target")
+          .setDescription("Target price (e.g. 80000) or % move (e.g. 5)")
+          .setRequired(true)
+          .setMinValue(0.000001),
       )
       .addIntegerOption((opt) =>
         opt
@@ -766,6 +890,54 @@ async function handleStock(interaction: ChatInputCommandInteraction, guildId: st
   }
 }
 
+async function handleCrypto(interaction: ChatInputCommandInteraction, guildId: string) {
+  const symbol = interaction.options.getString("symbol", true).toUpperCase().trim();
+  const direction = interaction.options.getString("direction", true);
+  const target = interaction.options.getNumber("target", true);
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const kindMap: Record<string, string> = {
+    above: "crypto:price-above",
+    below: "crypto:price-below",
+    "pct-up": "crypto:pct-move",
+    "pct-down": "crypto:pct-move",
+  };
+  const resolverKind = kindMap[direction];
+  if (!resolverKind) {
+    await interaction.editReply(`Unknown direction: ${direction}`);
+    return;
+  }
+
+  const resolverArgs =
+    resolverKind === "crypto:pct-move"
+      ? { symbol, pct: target, direction: direction === "pct-up" ? "up" : "down" }
+      : { symbol, target };
+
+  const question = (() => {
+    if (direction === "above")
+      return `Will ${symbol} trade above $${target.toLocaleString()} before the deadline?`;
+    if (direction === "below")
+      return `Will ${symbol} fall below $${target.toLocaleString()} before the deadline?`;
+    const dir = direction === "pct-up" ? "up" : "down";
+    return `Will ${symbol} move ${dir} ≥ ${target}% before the deadline?`;
+  })();
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    resolverKind,
+    resolverArgs,
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
 async function handleChallenge(
   interaction: ChatInputCommandInteraction,
   guildId: string,
@@ -854,6 +1026,154 @@ async function handleCsPremier(
   }
 }
 
+// ── /market first-to ─────────────────────────────────────────────────
+//
+// Creator self-dealing rule applies: the creator ideally shouldn't be
+// allowed to stake YES on a market seeded with their own players. That
+// rule isn't enforced anywhere in the codebase yet — documenting here
+// so the next pass can plug it in uniformly across all CS markets.
+
+const MENTION_RE = /<@!?(\d+)>/g;
+
+function parsePlayerMentions(raw: string): string[] {
+  const ids: string[] = [];
+  for (const m of raw.matchAll(MENTION_RE)) {
+    if (m[1] && !ids.includes(m[1])) ids.push(m[1]);
+  }
+  return ids;
+}
+
+function labelForSteamId(steamId: string): string {
+  const snap = getLatestSnapshot(steamId);
+  return snap?.name ?? steamId;
+}
+
+async function handleFirstTo(interaction: ChatInputCommandInteraction, guildId: string) {
+  const stat = interaction.options.getString("stat", true) as
+    | "ace"
+    | "thirty-bomb"
+    | "win-streak";
+  const scope = interaction.options.getString("scope", true) as "guild" | "list";
+  const playersRaw = interaction.options.getString("players");
+  const threshold = interaction.options.getInteger("threshold");
+
+  if (stat === "win-streak" && (threshold === null || threshold < 2)) {
+    await interaction.editReply(
+      "`win-streak` needs a `threshold` of at least 2 — how many wins in a row?",
+    );
+    return;
+  }
+
+  const tracked = new Set(getTrackedPlayers(guildId));
+  if (tracked.size === 0) {
+    await interaction.editReply(
+      "No tracked players in this server yet — add some with `/track` first.",
+    );
+    return;
+  }
+
+  // Resolve the player list (scope=list only). Mentioned users must
+  // have linked Steam accounts AND be tracked here — otherwise the
+  // market would reference someone the CS watcher ignores.
+  let steamIds: string[] | undefined;
+  const labels: string[] = [];
+  if (scope === "list") {
+    if (!playersRaw || playersRaw.trim().length === 0) {
+      await interaction.editReply(
+        "`scope=list` needs a `players` option — @mention the shortlist.",
+      );
+      return;
+    }
+    const discordIds = parsePlayerMentions(playersRaw);
+    if (discordIds.length === 0) {
+      await interaction.editReply(
+        "Couldn't parse any @mentions from `players`. Mention each player directly.",
+      );
+      return;
+    }
+    steamIds = [];
+    const notLinked: string[] = [];
+    const notTracked: string[] = [];
+    for (const discordId of discordIds) {
+      const steamId = getSteamId(discordId);
+      if (!steamId) {
+        notLinked.push(`<@${discordId}>`);
+        continue;
+      }
+      if (!tracked.has(steamId)) {
+        notTracked.push(`<@${discordId}>`);
+        continue;
+      }
+      if (!steamIds.includes(steamId)) {
+        steamIds.push(steamId);
+        labels.push(labelForSteamId(steamId));
+      }
+    }
+    if (notLinked.length > 0) {
+      await interaction.editReply(
+        `These players haven't linked their Steam: ${notLinked.join(", ")}. Ask them to run \`/link\`.`,
+      );
+      return;
+    }
+    if (notTracked.length > 0) {
+      await interaction.editReply(
+        `These players aren't tracked here: ${notTracked.join(", ")}. Add them with \`/track\`.`,
+      );
+      return;
+    }
+    if (steamIds.length === 0) {
+      await interaction.editReply(
+        "None of the mentioned players are tracked in this server.",
+      );
+      return;
+    }
+  }
+
+  // Question text — tuned to feel natural in British English.
+  const question = (() => {
+    if (scope === "guild") {
+      if (stat === "ace") {
+        return "First tracked player to land an ace in this server";
+      }
+      if (stat === "thirty-bomb") {
+        return "First tracked player to drop 30+ kills in a match";
+      }
+      return `First tracked player to win ${threshold} in a row`;
+    }
+    // scope = list
+    const list =
+      labels.length <= 3
+        ? labels.join(", ")
+        : `${labels.slice(0, 3).join(", ")} + ${labels.length - 3} more`;
+    if (stat === "ace") return `First of {${list}} to land an ace`;
+    if (stat === "thirty-bomb") return `First of {${list}} to go 30+ in a match`;
+    return `First of {${list}} to win ${threshold} in a row`;
+  })();
+
+  const probPct = interaction.options.getInteger("probability") ?? 50;
+  const durationChoice = interaction.options.getString("duration");
+  const expiresAt = expiryIso(durationHours(durationChoice));
+
+  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
+    resolverKind: "cs:first-to",
+    resolverArgs: {
+      stat,
+      scope,
+      guildId,
+      ...(steamIds ? { steamIds } : {}),
+      ...(stat === "win-streak" && threshold !== null ? { threshold } : {}),
+    },
+    initialProb: probPct / 100,
+  });
+  await interaction.editReply(renderMarketView(id));
+  try {
+    const msg = await interaction.fetchReply();
+    setBetMessage(id, msg.channelId, msg.id);
+  } catch (err) {
+    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
+  }
+}
+
 async function handleList(interaction: ChatInputCommandInteraction, guildId: string) {
   const open = listOpenBets(guildId);
   if (!open.length) {
@@ -899,8 +1219,10 @@ export const execute = wrapCommand(async (interaction) => {
   else if (sub === "cs-next-match") await handleCsNextMatch(interaction, guildId);
   else if (sub === "cs-rating-goal") await handleCsRatingGoal(interaction, guildId);
   else if (sub === "cs-premier") await handleCsPremier(interaction, guildId);
+  else if (sub === "first-to") await handleFirstTo(interaction, guildId);
   else if (sub === "mirror") await handleMirror(interaction, guildId);
   else if (sub === "stock") await handleStock(interaction, guildId);
+  else if (sub === "crypto") await handleCrypto(interaction, guildId);
   else if (sub === "challenge") await handleChallenge(interaction, guildId);
   else if (sub === "config") await handleConfig(interaction, guildId);
   else if (sub === "list") await handleList(interaction, guildId);

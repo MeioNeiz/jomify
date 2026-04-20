@@ -31,6 +31,22 @@ export {
   type VoteTally,
   voteOnDispute,
 } from "./disputes.js";
+export {
+  type AcceptResult,
+  acceptFlip,
+  declineFlip,
+  expireFlip,
+  type Flip,
+  type FlipSide,
+  type FlipStatus,
+  getExpiredOpenFlips,
+  getFlip,
+  getLastAcceptedFlipForUser,
+  getOpenFlipForUser,
+  openFlip,
+  setFlipMessage,
+} from "./flips.js";
 export { getAllTimeWins, getCurrentStandings } from "./leaderboard.js";
 export { getRecentLedger, type LedgerRow } from "./ledger.js";
+export { getTicksForBet, type Tick, type TickKind } from "./ticks.js";
 export { getWagersForBet, placeWager, type Wager } from "./wagers.js";

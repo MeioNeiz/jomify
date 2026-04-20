@@ -12,7 +12,14 @@ import {
 } from "../src/betting/config.js";
 import db from "../src/betting/db.js";
 import { computeMatchDelta } from "../src/betting/listeners/cs-match-completed.js";
-import { accounts, bets, ledger, wagers, weeklyWins } from "../src/betting/schema.js";
+import {
+  accounts,
+  bets,
+  ledger,
+  marketTicks,
+  wagers,
+  weeklyWins,
+} from "../src/betting/schema.js";
 import {
   adjustBalance,
   cancelBet,
@@ -56,6 +63,7 @@ function ledgerSum(discordId: string, guildId = GUILD): number {
 beforeEach(() => {
   // Drizzle's delete is fine against the in-memory DB — keeps the tests
   // schema-aware rather than hard-coding raw SQL.
+  db.delete(marketTicks).run();
   db.delete(wagers).run();
   db.delete(ledger).run();
   db.delete(bets).run();

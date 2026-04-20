@@ -11,6 +11,7 @@ import { dispatchComponent } from "./components.js";
 // the CS module ignorant of betting while ensuring grants land in the
 // same process.
 import "./betting/listeners/cs-match-completed.js";
+import { startFirstToListener } from "./betting/listeners/cs-first-to.js";
 // Side-effect import: registers the CS next-match resolver kinds. Must
 // land before the watcher starts so the registry is populated when the
 // first tick fires.
@@ -19,7 +20,9 @@ import "./betting/resolvers/cs-rating-goal.js";
 import "./betting/resolvers/cs-premier-milestone.js";
 import "./betting/resolvers/cs-win-streak.js";
 import "./betting/resolvers/cs-clutch-count.js";
+import "./betting/resolvers/cs-first-to.js";
 import "./betting/resolvers/stock.js";
+import "./betting/resolvers/crypto.js";
 import "./betting/resolvers/polymarket.js";
 import "./betting/resolvers/kalshi.js";
 import { renderMarketView } from "./betting/commands/market.js";
@@ -49,6 +52,7 @@ client.once(Events.ClientReady, (c) => {
   startWeekly(client);
   startExpiryWatcher(client);
   startResolverWatcher(client);
+  startFirstToListener(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
