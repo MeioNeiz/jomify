@@ -10,7 +10,7 @@ import {
   register,
 } from "../src/betting/resolvers/index.js";
 import { tick } from "../src/betting/resolvers/watcher.js";
-import { accounts, bets, ledger, wagers } from "../src/betting/schema.js";
+import { accounts, bets, ledger, marketTicks, wagers } from "../src/betting/schema.js";
 import {
   adjustBalance,
   cancelBet,
@@ -35,6 +35,7 @@ const fakeClient = {} as unknown as Client;
 // accumulates across tests in a single run (Bun's module cache is
 // shared), so each test claims its own kind name.
 beforeEach(() => {
+  db.delete(marketTicks).run();
   db.delete(wagers).run();
   db.delete(ledger).run();
   db.delete(bets).run();

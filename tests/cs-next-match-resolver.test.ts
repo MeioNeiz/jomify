@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Client } from "discord.js";
 import db from "../src/betting/db.js";
 import { tick } from "../src/betting/resolvers/watcher.js";
-import { accounts, bets, ledger, wagers } from "../src/betting/schema.js";
+import { accounts, bets, ledger, marketTicks, wagers } from "../src/betting/schema.js";
 import { adjustBalance, createBet, getBet, placeWager } from "../src/betting/store.js";
 import { sqlite as csDb } from "../src/cs/db.js";
 
@@ -55,6 +55,7 @@ function seedMatch(opts: {
 }
 
 beforeEach(() => {
+  db.delete(marketTicks).run();
   db.delete(wagers).run();
   db.delete(ledger).run();
   db.delete(bets).run();
