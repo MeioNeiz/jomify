@@ -85,9 +85,13 @@ export const execute = wrapCommand(async (interaction) => {
         };
       }
       const body = rows.map((r, i) => formatRow(r, i)).join("\n");
+      const legend =
+        "\n\n_**Premier**: your net Premier rating change across matches played " +
+        "with them. **Carry score** (fallback when Premier data is missing): " +
+        "teammate's rating above team average × match outcome (win=1, tie=0.5)._";
       const e = embed()
         .setTitle(`Who Carries ${resolved.label}? (Last ${days}d)`)
-        .setDescription(body + freshnessSuffix(latest, "last match"));
+        .setDescription(body + legend + freshnessSuffix(latest, "last match"));
       return { embeds: [e] };
     },
     missingMessage: `Need at least ${MIN_SHARED} shared matches with a teammate. Play more together.`,

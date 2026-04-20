@@ -28,6 +28,7 @@ type View = {
   verdict: string;
   icon: string;
   kind: EmbedKind;
+  score: number;
   basic: string[];
   flagged: Stat[];
   elevated: Stat[];
@@ -108,6 +109,7 @@ function buildView(steamId: string, label: string, inv: InvResult): View | null 
     verdict: v,
     icon,
     kind,
+    score,
     basic: buildBasicStats(steamId, inv),
     flagged,
     elevated,
@@ -148,6 +150,7 @@ export const execute = wrapCommand(async (interaction) => {
       verdict,
       icon,
       kind,
+      score,
       basic,
       flagged,
       elevated,
@@ -155,7 +158,9 @@ export const execute = wrapCommand(async (interaction) => {
       matchCount,
       latest,
     }) => {
-      const sections: string[] = [`${icon} **${verdict}**`];
+      const sections: string[] = [
+        `${icon} **${verdict}** — score **${score.toFixed(1)}** / suspect ≥ ${SUSPECT_THRESHOLD}`,
+      ];
       if (basic.length) sections.push(basic.join("\n"));
 
       const analysisParts: string[] = [];
@@ -163,6 +168,12 @@ export const execute = wrapCommand(async (interaction) => {
       if (elevated.length) analysisParts.push(renderChecks(elevated, "\u26A0\uFE0F"));
       if (normal.length) analysisParts.push(renderChecks(normal, "\u2705"));
       if (analysisParts.length) sections.push(analysisParts.join("\n"));
+
+      sections.push(
+        "_How: each metric's z-score (vs competitive average) adds to the total " +
+          "once it crosses its threshold (usually z > 2). Higher-weight checks use " +
+          "z > 2.5. HS consistency + 4k/5k rate add flat bonuses._",
+      );
 
       const e = embed(kind)
         .setTitle(`Sus Check: ${label}`)

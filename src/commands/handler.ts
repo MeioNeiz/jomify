@@ -110,11 +110,20 @@ export async function requireLinkedUser(
   userOpt = "user",
 ): Promise<{ steamId: string; label: string } | null> {
   const user = interaction.options.getUser(userOpt);
+  const targetIsSelf = !user || user.id === interaction.user.id;
   const discordId = user?.id ?? interaction.user.id;
-  const label = user?.displayName ?? interaction.user.displayName;
+  const label =
+    user?.displayName ?? user?.username ?? interaction.user.displayName ?? "They";
+  if (user?.bot) {
+    await interaction.editReply(`${label} is a bot — no stats to show.`);
+    return null;
+  }
   const steamId = getSteamId(discordId);
   if (!steamId) {
-    await interaction.editReply(`${label} hasn't linked. Use \`/link\` first.`);
+    const msg = targetIsSelf
+      ? "You haven't linked your Steam yet. Run `/link` to set it up."
+      : `${label} hasn't linked their Steam — ask them to run \`/link\`.`;
+    await interaction.editReply(msg);
     return null;
   }
   return { steamId, label };
