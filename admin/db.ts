@@ -7,7 +7,13 @@ import { adminActions } from "../src/betting/schema.js";
 
 export { db };
 
-export type AdminActionKind = "dispute-resolve" | "balance-adjust" | "market-cancel";
+export type AdminActionKind =
+  | "dispute-resolve"
+  | "balance-adjust"
+  | "market-cancel"
+  | "market-create"
+  | "market-reopen-cancel"
+  | "market-reopen-flip";
 
 export function logAdminAction(
   adminId: string,
