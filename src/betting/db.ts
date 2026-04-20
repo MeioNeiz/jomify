@@ -220,6 +220,61 @@ sqlite.run(`CREATE INDEX IF NOT EXISTS idx_admin_actions_at ON admin_actions (at
 sqlite.run(
   `CREATE INDEX IF NOT EXISTS idx_admin_actions_admin ON admin_actions (admin_id)`,
 );
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS market_ticks (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    bet_id         INTEGER NOT NULL REFERENCES bets(id),
+    occurred_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    kind           TEXT NOT NULL,
+    discord_id     TEXT NOT NULL,
+    outcome        TEXT,
+    shares         REAL NOT NULL DEFAULT 0,
+    amount         INTEGER NOT NULL DEFAULT 0,
+    q_yes_before   REAL NOT NULL,
+    q_no_before    REAL NOT NULL,
+    q_yes_after    REAL NOT NULL,
+    q_no_after     REAL NOT NULL,
+    b              REAL NOT NULL,
+    prob_yes_after REAL NOT NULL
+  )
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_market_ticks_bet_at
+    ON market_ticks (bet_id, occurred_at)
+`);
+sqlite.run(`
+  CREATE INDEX IF NOT EXISTS idx_market_ticks_user_at
+    ON market_ticks (discord_id, occurred_at)
+`);
+
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS flips (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id       TEXT NOT NULL,
+    challenger_id  TEXT NOT NULL,
+    target_id      TEXT NOT NULL,
+    amount         INTEGER NOT NULL,
+    status         TEXT NOT NULL,
+    winner_id      TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at    TEXT,
+    expires_at     TEXT NOT NULL,
+    channel_id     TEXT,
+    message_id     TEXT
+  )
+`);
+sqlite.run(
+  `CREATE INDEX IF NOT EXISTS idx_flips_guild_status ON flips (guild_id, status)`,
+);
+sqlite.run(
+  `CREATE INDEX IF NOT EXISTS idx_flips_challenger
+    ON flips (challenger_id, guild_id, status)`,
+);
+sqlite.run(
+  `CREATE INDEX IF NOT EXISTS idx_flips_target
+    ON flips (target_id, guild_id, status)`,
+);
+sqlite.run(`CREATE INDEX IF NOT EXISTS idx_flips_expires ON flips (expires_at)`);
 
 function hasColumn(sql: Database, table: string, column: string): boolean {
   const rows = sql.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();

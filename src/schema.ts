@@ -61,6 +61,17 @@ export const errors = sqliteTable(
   (t) => [index("idx_errors_occurred").on(t.occurredAt)],
 );
 
+// Last-registered slash-command hash per scope ('global' or
+// 'guild:<id>'). register.ts skips the Discord PUT call when the hash
+// matches, so repeat runs cost nothing at the API. Cleared by
+// running register with --force.
+export const commandRegistrations = sqliteTable("command_registrations", {
+  scope: text("scope").primaryKey(),
+  hash: text("hash").notNull(),
+  count: integer("count").notNull(),
+  registeredAt: text("registered_at").notNull().default(now),
+});
+
 // Per-call outbound API log. Captures duration and final status so we
 // can spot slow endpoints without manually tailing journald. One row
 // per logical call (not per HTTP attempt); retry_count tells us how
