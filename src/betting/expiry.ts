@@ -1,5 +1,6 @@
 // Auto-cancels open markets whose expires_at has passed and edits
-// their original Discord message to show the cancelled state.
+// their original Discord message to show the cancelled state. Same
+// sweeper reaps expired coin flips on the same tick.
 //
 // Polls every 30 s. Cheap: an index on expires_at means the query is
 // O(expired rows). Polling beats a per-market setTimeout because:
@@ -10,8 +11,15 @@
 //     product.
 import type { Client, TextChannel } from "discord.js";
 import log from "../logger.js";
+import { expiredView } from "./commands/flip.js";
 import { renderMarketView } from "./commands/market.js";
-import { cancelBet, getExpiredOpenBets } from "./store.js";
+import {
+  cancelBet,
+  expireFlip,
+  getExpiredOpenBets,
+  getExpiredOpenFlips,
+  getFlip,
+} from "./store.js";
 
 const TICK_MS = 30_000;
 
@@ -39,6 +47,32 @@ async function tick(client: Client): Promise<void> {
       // Message probably deleted — the cancel is still applied in the
       // DB, so this is purely a UI-sync failure.
       log.warn({ betId: b.id, err }, "Couldn't edit expired market message");
+    }
+  }
+
+  const expiredFlips = getExpiredOpenFlips();
+  for (const f of expiredFlips) {
+    try {
+      expireFlip(f.id);
+    } catch (err) {
+      log.error({ flipId: f.id, err }, "Flip auto-expire failed");
+      continue;
+    }
+    if (!f.channelId || !f.messageId) continue;
+    try {
+      const channel = await client.channels.fetch(f.channelId);
+      if (!channel?.isTextBased()) continue;
+      const message = await (channel as TextChannel).messages.fetch(f.messageId);
+      const flip = getFlip(f.id);
+      if (!flip) continue;
+      const view = expiredView(flip);
+      await message.edit({
+        content: null,
+        embeds: view.embeds ?? [],
+        components: view.components ?? [],
+      });
+    } catch (err) {
+      log.warn({ flipId: f.id, err }, "Couldn't edit expired flip message");
     }
   }
 }

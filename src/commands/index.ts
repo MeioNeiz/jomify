@@ -5,6 +5,7 @@ import type {
   SlashCommandSubcommandsOnlyBuilder,
 } from "discord.js";
 import * as bet from "../betting/commands/bet.js";
+import * as flip from "../betting/commands/flip.js";
 import * as market from "../betting/commands/market.js";
 import * as best from "../cs/commands/best.js";
 import * as carry from "../cs/commands/carry.js";
@@ -62,4 +63,5 @@ export const commands: [string, Command][] = [
   ["say", say],
   ["market", market],
   ["bet", bet],
+  ["flip", flip],
 ];
