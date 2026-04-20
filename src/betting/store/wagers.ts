@@ -5,8 +5,8 @@ import {
   STARTING_BALANCE,
 } from "../config.js";
 import db from "../db.js";
-import { lmsrBuyShares } from "../lmsr.js";
-import { accounts, bets, ledger, wagers } from "../schema.js";
+import { lmsrBuyShares, lmsrProb } from "../lmsr.js";
+import { accounts, bets, ledger, marketTicks, wagers } from "../schema.js";
 import type { Outcome } from "./bets.js";
 
 export type Wager = {
@@ -106,9 +106,11 @@ export function placeWager(
     // Build the bets update: always update LMSR state if needed, and
     // auto-extend the deadline when a wager lands close to expiry.
     const betsUpdate: Record<string, unknown> = {};
+    const qYesAfter = bet.b > 0 && outcome === "yes" ? bet.qYes + shares : bet.qYes;
+    const qNoAfter = bet.b > 0 && outcome === "no" ? bet.qNo + shares : bet.qNo;
     if (bet.b > 0) {
-      betsUpdate.qYes = outcome === "yes" ? bet.qYes + shares : bet.qYes;
-      betsUpdate.qNo = outcome === "no" ? bet.qNo + shares : bet.qNo;
+      betsUpdate.qYes = qYesAfter;
+      betsUpdate.qNo = qNoAfter;
     }
     if (bet.expiresAt) {
       const expiresMs = new Date(`${bet.expiresAt}Z`).getTime();
@@ -126,5 +128,27 @@ export function placeWager(
     }
 
     tx.insert(wagers).values({ betId, discordId, outcome, amount, shares }).run();
+
+    // Price-curve snapshot. Only LMSR markets have a price to log;
+    // pari-mutuel (b=0) skips — there's no meaningful probability to
+    // record and downstream chart queries are LMSR-only by design.
+    if (bet.b > 0) {
+      tx.insert(marketTicks)
+        .values({
+          betId,
+          kind: "wager",
+          discordId,
+          outcome,
+          shares,
+          amount,
+          qYesBefore: bet.qYes,
+          qNoBefore: bet.qNo,
+          qYesAfter,
+          qNoAfter,
+          b: bet.b,
+          probYesAfter: lmsrProb(qYesAfter, qNoAfter, bet.b),
+        })
+        .run();
+    }
   });
 }
