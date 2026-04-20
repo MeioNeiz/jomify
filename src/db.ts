@@ -96,6 +96,14 @@ sqlite.run(`
   CREATE INDEX IF NOT EXISTS idx_api_calls_endpoint
     ON api_calls (endpoint, occurred_at)
 `);
+sqlite.run(`
+  CREATE TABLE IF NOT EXISTS command_registrations (
+    scope         TEXT PRIMARY KEY,
+    hash          TEXT NOT NULL,
+    count         INTEGER NOT NULL,
+    registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
 
 const db = drizzle(sqlite, { schema });
 

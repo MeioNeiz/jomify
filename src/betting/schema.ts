@@ -186,6 +186,44 @@ export const adminActions = sqliteTable(
   ],
 );
 
+// Append-only price-changing-event log for LMSR markets. One row per
+// wager (or future sell/resolve/cancel) captured inside the same
+// transaction that mutates qYes/qNo — so the tick stream is
+// guaranteed consistent with the bet's running state. Enough here to
+// reconstruct the price curve + trade history later (charts, Brier
+// scoring, wash-trade detection) without re-deriving from ledger.
+// `kind` is left open-ended for future events; today only 'wager' is
+// written. `shares` is signed (positive = buy, negative = sell);
+// `amount` is signed likewise. Pari-mutuel markets (b=0) don't emit
+// ticks — they have no price curve to snapshot.
+export const marketTicks = sqliteTable(
+  "market_ticks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    betId: integer("bet_id")
+      .notNull()
+      .references(() => bets.id),
+    occurredAt: text("occurred_at").notNull().default(now),
+    // 'wager' today. Future: 'sell' | 'resolve' | 'cancel'.
+    kind: text("kind").notNull(),
+    discordId: text("discord_id").notNull(),
+    // 'yes' | 'no' | null (null for non-sided events like resolve/cancel).
+    outcome: text("outcome"),
+    shares: real("shares").notNull().default(0),
+    amount: integer("amount").notNull().default(0),
+    qYesBefore: real("q_yes_before").notNull(),
+    qNoBefore: real("q_no_before").notNull(),
+    qYesAfter: real("q_yes_after").notNull(),
+    qNoAfter: real("q_no_after").notNull(),
+    b: real("b").notNull(),
+    probYesAfter: real("prob_yes_after").notNull(),
+  },
+  (t) => [
+    index("idx_market_ticks_bet_at").on(t.betId, t.occurredAt),
+    index("idx_market_ticks_user_at").on(t.discordId, t.occurredAt),
+  ],
+);
+
 // Append-only audit trail for every balance mutation. Every adjust…
 // write lands one row here in the same transaction, so the account
 // balance is always reconstructable by summing the ledger.
@@ -197,13 +235,48 @@ export const ledger = sqliteTable(
     guildId: text("guild_id").notNull(),
     delta: integer("delta").notNull(),
     // 'starting-grant' | 'match' | 'bet-placed' | 'bet-payout' | 'bet-refund'
+    //   | 'bet-cancel' | 'bet-reverse' | 'dispute-fee'
+    //   | 'flip-stake' | 'flip-win' | 'flip-refund'
+    // Plain text column — no CHECK constraint — so new reasons are
+    // additive and don't need a schema migration.
     reason: text("reason").notNull(),
-    // Optional reference: bet id (for bet-*), match id (for match).
+    // Optional reference: bet id (for bet-*), match id (for match),
+    // flip id (for flip-*).
     ref: text("ref"),
     at: text("at").notNull().default(now),
   },
   (t) => [
     index("idx_ledger_discord_at").on(t.discordId, t.at),
     index("idx_ledger_guild_discord").on(t.guildId, t.discordId),
+  ],
+);
+
+// 1v1 coin flip challenge. Public embed + Accept/Decline buttons. The
+// stake is debited from the challenger at open time (held in escrow)
+// and credited to the winner on accept, or refunded on decline /
+// expire. Status: 'open' | 'accepted' | 'declined' | 'expired'.
+// `winner_id` is only set when status = 'accepted'. Fair RNG:
+// heads = challenger wins, tails = target wins, 50/50 via crypto.randomInt.
+export const flips = sqliteTable(
+  "flips",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    guildId: text("guild_id").notNull(),
+    challengerId: text("challenger_id").notNull(),
+    targetId: text("target_id").notNull(),
+    amount: integer("amount").notNull(),
+    status: text("status").notNull(),
+    winnerId: text("winner_id"),
+    createdAt: text("created_at").notNull().default(now),
+    resolvedAt: text("resolved_at"),
+    expiresAt: text("expires_at").notNull(),
+    channelId: text("channel_id"),
+    messageId: text("message_id"),
+  },
+  (t) => [
+    index("idx_flips_guild_status").on(t.guildId, t.status),
+    index("idx_flips_challenger").on(t.challengerId, t.guildId, t.status),
+    index("idx_flips_target").on(t.targetId, t.guildId, t.status),
+    index("idx_flips_expires").on(t.expiresAt),
   ],
 );
