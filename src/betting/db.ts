@@ -249,12 +249,45 @@ sqlite.run(`
     ON market_ticks (discord_id, occurred_at)
 `);
 
+// Flips v2: target_id is now nullable (open challenge — stamped on
+// accept). Rebuild the table if an older install still has the
+// NOT NULL constraint; SQLite can't drop NOT NULL in place.
+if (tableExists(sqlite, "flips") && isColumnNotNull(sqlite, "flips", "target_id")) {
+  sqlite.transaction(() => {
+    sqlite.run(`ALTER TABLE flips RENAME TO flips_legacy`);
+    sqlite.run(`
+      CREATE TABLE flips (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id       TEXT NOT NULL,
+        challenger_id  TEXT NOT NULL,
+        target_id      TEXT,
+        amount         INTEGER NOT NULL,
+        status         TEXT NOT NULL,
+        winner_id      TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        resolved_at    TEXT,
+        expires_at     TEXT NOT NULL,
+        channel_id     TEXT,
+        message_id     TEXT
+      )
+    `);
+    sqlite.run(`
+      INSERT INTO flips
+      SELECT id, guild_id, challenger_id, target_id, amount, status,
+             winner_id, created_at, resolved_at, expires_at,
+             channel_id, message_id
+      FROM flips_legacy
+    `);
+    sqlite.run(`DROP TABLE flips_legacy`);
+  })();
+}
+
 sqlite.run(`
   CREATE TABLE IF NOT EXISTS flips (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id       TEXT NOT NULL,
     challenger_id  TEXT NOT NULL,
-    target_id      TEXT NOT NULL,
+    target_id      TEXT,
     amount         INTEGER NOT NULL,
     status         TEXT NOT NULL,
     winner_id      TEXT,
@@ -277,10 +310,21 @@ sqlite.run(
     ON flips (target_id, guild_id, status)`,
 );
 sqlite.run(`CREATE INDEX IF NOT EXISTS idx_flips_expires ON flips (expires_at)`);
+sqlite.run(
+  `CREATE INDEX IF NOT EXISTS idx_flips_channel_status
+    ON flips (channel_id, status)`,
+);
 
 function hasColumn(sql: Database, table: string, column: string): boolean {
   const rows = sql.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
   return rows.some((r) => r.name === column);
+}
+
+function isColumnNotNull(sql: Database, table: string, column: string): boolean {
+  const rows = sql
+    .query<{ name: string; notnull: number }, []>(`PRAGMA table_info(${table})`)
+    .all();
+  return rows.some((r) => r.name === column && r.notnull === 1);
 }
 
 function tableExists(sql: Database, table: string): boolean {

@@ -42,7 +42,7 @@ export {
 export {
   type AcceptResult,
   acceptFlip,
-  declineFlip,
+  cancelFlip,
   expireFlip,
   type Flip,
   type FlipSide,
@@ -50,7 +50,8 @@ export {
   getExpiredOpenFlips,
   getFlip,
   getLastAcceptedFlipForUser,
-  getOpenFlipForUser,
+  getLatestOpenFlipInChannel,
+  getOpenFlipForChallenger,
   openFlip,
   setFlipMessage,
 } from "./flips.js";
