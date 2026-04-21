@@ -2,18 +2,18 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { and, sql } from "drizzle-orm";
 import {
   BAD_GAME_RATING,
-  CREATOR_STAKE_TIERS,
   DEFAULT_CREATOR_STAKE,
   DISPUTE_COST,
   MATCH_GRANT_BASE,
   MATCH_GRANT_PER_TEAMMATE,
   MATCH_GRANT_WIN_BONUS,
+  MIN_CREATOR_STAKE,
   PENALTY_BAD_GAME,
   PENALTY_LOSS_STREAK,
   PENALTY_TEAM_FLASH,
+  perTraderBonus,
   STARTING_BALANCE,
   TRADER_BONUS_CAP,
-  tierFor,
 } from "../src/betting/config.js";
 import db from "../src/betting/db.js";
 import { computeMatchDelta } from "../src/betting/listeners/cs-match-completed.js";
@@ -731,10 +731,16 @@ describe("creator-LP — stake escrow + settleCreator", () => {
     expect(listOpenBets(GUILD).length).toBe(0);
   });
 
-  test("createBet rejects unknown stake tiers", () => {
+  test("createBet rejects stake below the minimum", () => {
     expect(() =>
-      createBet(GUILD, CREATOR_DISCORD, "Weird tier", null, { stake: 7 }),
-    ).toThrow(/Unknown stake tier/);
+      createBet(GUILD, CREATOR_DISCORD, "Too tiny", null, { stake: 4 }),
+    ).toThrow(/Stake must be an integer/);
+  });
+
+  test("createBet rejects non-integer stake", () => {
+    expect(() =>
+      createBet(GUILD, CREATOR_DISCORD, "Fractional", null, { stake: 5.5 }),
+    ).toThrow(/Stake must be an integer/);
   });
 
   test("placeWager blocks the creator on their own (non-challenge) market", () => {
@@ -803,8 +809,7 @@ describe("creator-LP — stake escrow + settleCreator", () => {
     placeWager(id, DISCORD_C, "no", 2);
     cancelBet(id);
 
-    const tier = tierFor(20);
-    const expectedBonus = Math.floor(Math.min(3, TRADER_BONUS_CAP) * tier.perTraderBonus);
+    const expectedBonus = Math.floor(Math.min(3, TRADER_BONUS_CAP) * perTraderBonus(20));
     const bonusRow = getRecentLedger(CREATOR_DISCORD, GUILD, 10).find(
       (r) => r.reason === "creator-trader-bonus",
     );
@@ -818,8 +823,10 @@ describe("creator-LP — stake escrow + settleCreator", () => {
     expect(rows.find((r) => r.reason === "creator-trader-bonus")).toBeUndefined();
   });
 
-  test("CREATOR_STAKE_TIERS match the canonical set from the plan", () => {
-    expect(CREATOR_STAKE_TIERS.map((t) => t.stake)).toEqual([5, 20, 100]);
+  test("perTraderBonus scales linearly with stake at 5%", () => {
+    expect(perTraderBonus(MIN_CREATOR_STAKE)).toBeCloseTo(0.25, 10);
+    expect(perTraderBonus(20)).toBeCloseTo(1, 10);
+    expect(perTraderBonus(100)).toBeCloseTo(5, 10);
   });
 
   test("reopenBet reverses creator-settle + creator-trader-bonus and clears flag", () => {

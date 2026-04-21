@@ -60,37 +60,36 @@ export const DISPUTE_COST = 5;
 export const LMSR_RAKE = 0.02;
 export const DEFAULT_EXPIRY_HOURS = 72;
 
-// Creator-as-LP tiers. Stake is escrowed from the creator's balance at
+// Creator-as-LP stake. Escrowed from the creator's balance at
 // createBet; `b = stake / ln 2` guarantees max creator loss == stake.
-// Per-trader bonus rewards engagement (not notional), paid from the
-// protocol reserve at settlement, capped at TRADER_BONUS_CAP traders.
-export const CREATOR_STAKE_TIERS = [
-  { stake: 5, perTraderBonus: 0.2 },
-  { stake: 20, perTraderBonus: 1 },
-  { stake: 100, perTraderBonus: 5 },
-] as const;
-export type CreatorStakeTier = (typeof CREATOR_STAKE_TIERS)[number]["stake"];
-
+// Stake is a plain integer — no tiers. Per-trader bonus rewards
+// engagement (not notional), paid from the protocol reserve at
+// settlement, capped at TRADER_BONUS_CAP traders.
 export const TRADER_BONUS_CAP = 50;
 
-// Smallest tier — used as the default for every create path until
-// per-command tier selection lands in phase 2.
-export const DEFAULT_CREATOR_STAKE: CreatorStakeTier = 5;
+// Smallest stake allowed — keeps tiny markets honest (b ≈ 7.2 at 5).
+export const MIN_CREATOR_STAKE = 5;
 
-// Challenge markets deserve more than the floor tier — the challenge
-// itself is the market, so gatekeep with a tier-20 minimum.
-export const CHALLENGE_MIN_STAKE: CreatorStakeTier = 20;
+// Default when the user doesn't pick an explicit stake.
+export const DEFAULT_CREATOR_STAKE = MIN_CREATOR_STAKE;
+
+// Challenge markets gatekeep with a higher floor — the challenge
+// itself is the market, so the stake needs to mean something.
+export const CHALLENGE_MIN_STAKE = 20;
 
 /** LMSR liquidity depth derived from the creator's stake (max loss == stake). */
 export function bFromStake(stake: number): number {
   return stake / Math.LN2;
 }
 
-/** Lookup a tier by its stake amount. Throws on unknown values. */
-export function tierFor(stake: number): (typeof CREATOR_STAKE_TIERS)[number] {
-  const tier = CREATOR_STAKE_TIERS.find((t) => t.stake === stake);
-  if (!tier) throw new Error(`Unknown stake tier ${stake}`);
-  return tier;
+/**
+ * Per-trader engagement bonus paid from protocol reserve at settlement.
+ * Super-linear in practice via the LMSR side (bigger stake → deeper
+ * book → more volume → more rake) — this bonus just adds a flat 5% of
+ * stake per unique trader, capped at TRADER_BONUS_CAP.
+ */
+export function perTraderBonus(stake: number): number {
+  return stake * 0.05;
 }
 
 // Auto-extend: when a wager lands within AUTO_EXTEND_THRESHOLD_HOURS of

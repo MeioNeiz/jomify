@@ -26,13 +26,13 @@ import { fetchGammaMarket } from "../resolvers/polymarket.js";
 import "../disputes.js";
 import {
   CHALLENGE_MIN_STAKE,
-  CREATOR_STAKE_TIERS,
   DEFAULT_CREATOR_STAKE,
   DEFAULT_EXPIRY_HOURS,
   DISPUTE_COST,
   LMSR_RAKE,
+  MIN_CREATOR_STAKE,
+  perTraderBonus,
   TRADER_BONUS_CAP,
-  tierFor,
 } from "../config.js";
 import { lmsrExpectedPayout, lmsrProb, lmsrSellRefund } from "../lmsr.js";
 import { lookup } from "../resolvers/index.js";
@@ -99,17 +99,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss, deeper markets need bigger stakes (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -161,17 +158,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -218,17 +212,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -297,17 +288,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -366,17 +354,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -433,17 +418,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(MIN_CREATOR_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub
@@ -521,18 +503,14 @@ export const data = new SlashCommandBuilder()
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
       })
-      .addIntegerOption((opt) => {
+      .addIntegerOption((opt) =>
         opt
           .setName("stake")
           .setDescription(
             `Your LP stake — challenges stake at least ${CHALLENGE_MIN_STAKE} (default: ${CHALLENGE_MIN_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          if (t.stake < CHALLENGE_MIN_STAKE) continue;
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
+          )
+          .setMinValue(CHALLENGE_MIN_STAKE),
+      ),
   )
   .addSubcommand((sub) =>
     sub.setName("list").setDescription("Show open markets in this server"),
@@ -601,9 +579,8 @@ export function renderMarketView(
 
   if (bet.status === "open" && bet.creatorStake > 0) {
     const uniqueTraders = new Set(allWagers.map((w) => w.discordId)).size;
-    const { perTraderBonus } = tierFor(bet.creatorStake);
     const lockedBonus = Math.floor(
-      Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus,
+      Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus(bet.creatorStake),
     );
     descLines.push(
       `📒 LP: **${uniqueTraders}** trader${uniqueTraders === 1 ? "" : "s"}` +
