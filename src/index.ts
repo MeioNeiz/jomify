@@ -28,7 +28,7 @@ import "./betting/resolvers/kalshi.js";
 import { renderMarketView } from "./betting/commands/market.js";
 import { startExpiryWatcher } from "./betting/expiry.js";
 import { startResolverWatcher } from "./betting/resolvers/watcher.js";
-import { getBet } from "./betting/store/bets.js";
+import { getBet, setBetMessage } from "./betting/store/bets.js";
 import { getDispute } from "./betting/store/disputes.js";
 import { config } from "./config.js";
 import { startWatcher } from "./cs/watcher.js";
@@ -124,6 +124,36 @@ Bun.serve({
           { error: (err as Error).message, channels: [] },
           { status: 502 },
         );
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/post-market") {
+      let payload: { betId: number; channelId: string };
+      try {
+        payload = (await req.json()) as { betId: number; channelId: string };
+      } catch {
+        return new Response("Bad Request", { status: 400 });
+      }
+      if (!payload.betId || !payload.channelId) {
+        return new Response("Missing betId or channelId", { status: 400 });
+      }
+      const bet = getBet(payload.betId);
+      if (!bet) return new Response(`Bet ${payload.betId} not found`, { status: 404 });
+      try {
+        const ch = await client.channels.fetch(payload.channelId);
+        if (!ch?.isTextBased()) {
+          return new Response("Channel is not text-capable", { status: 400 });
+        }
+        const view = renderMarketView(payload.betId);
+        const msg = await (ch as TextChannel).send({
+          content: view.content ?? undefined,
+          embeds: view.embeds ?? [],
+          components: view.components ?? [],
+        });
+        setBetMessage(payload.betId, msg.channelId, msg.id);
+        return new Response("OK");
+      } catch (err) {
+        log.warn({ betId: payload.betId, err }, "IPC /post-market failed");
+        return new Response((err as Error).message, { status: 502 });
       }
     }
     if (req.method !== "POST" || url.pathname !== "/refresh") {

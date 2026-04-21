@@ -1,7 +1,11 @@
 /** @jsxImportSource hono/jsx */
 import { count, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { DEFAULT_EXPIRY_HOURS } from "../../src/betting/config.js";
+import {
+  DEFAULT_CREATOR_STAKE,
+  DEFAULT_EXPIRY_HOURS,
+  MIN_CREATOR_STAKE,
+} from "../../src/betting/config.js";
 import { bets, disputes, ledger, wagers } from "../../src/betting/schema.js";
 import {
   cancelBet,
@@ -10,13 +14,15 @@ import {
   resolveBet,
 } from "../../src/betting/store/bets.js";
 import { getTicksForBet, type Tick } from "../../src/betting/store.js";
+import { getNotifyChannel } from "../../src/store.js";
 import { db, logAdminAction } from "../db.js";
-import { notifyBot } from "../ipc.js";
+import { fetchGuildChannels, notifyBot, postMarket } from "../ipc.js";
 import type { Env } from "../middleware.js";
 import {
   Badge,
   Btn,
   Card,
+  ChannelPicker,
   fmtDate,
   H1,
   H2,
@@ -263,6 +269,7 @@ router.get("/create", async (c) => {
   const csrf = c.get("csrf");
   const flash = c.req.query("flash");
   const error = c.req.query("error");
+  const selectedGuild = (c.req.query("guild_id") ?? "").trim();
 
   // Distinct guilds we already know about, to make life easier.
   const guildRows = db
@@ -271,6 +278,12 @@ router.get("/create", async (c) => {
     .groupBy(bets.guildId)
     .orderBy(bets.guildId)
     .all();
+
+  // Only fetch channels if a guild is selected — otherwise we don't
+  // know whose channels to ask for, and the admin gets a text-input
+  // fallback that still works.
+  const channels = selectedGuild ? await fetchGuildChannels(selectedGuild) : [];
+  const defaultChannel = selectedGuild ? getNotifyChannel(selectedGuild) : null;
 
   return c.html(
     page(
@@ -290,19 +303,19 @@ router.get("/create", async (c) => {
           </div>
         )}
         <Card>
-          <form method="post" action="/markets/create" class="space-y-4">
-            <HiddenCsrf token={csrf} />
-            <div>
-              <label for="guild_id" class="block text-xs text-gray-400 mb-1">
-                Guild ID (required)
-              </label>
+          <form method="get" action="/markets/create" class="space-y-2 mb-4">
+            <label for="guild_picker" class="block text-xs text-gray-400 mb-1">
+              Guild — pick to load its channel list
+            </label>
+            <div class="flex gap-2">
               <input
-                id="guild_id"
+                id="guild_picker"
                 type="text"
                 name="guild_id"
                 required
                 list="guild-options"
-                class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white font-mono"
+                value={selectedGuild}
+                class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm flex-1 text-white font-mono"
                 placeholder="e.g. 123456789012345678"
               />
               <datalist id="guild-options">
@@ -310,7 +323,12 @@ router.get("/create", async (c) => {
                   <option value={g.guildId} />
                 ))}
               </datalist>
+              <Btn label="Load channels" variant="ghost" />
             </div>
+          </form>
+          <form method="post" action="/markets/create" class="space-y-4">
+            <HiddenCsrf token={csrf} />
+            <input type="hidden" name="guild_id" value={selectedGuild} />
             <div>
               <label for="creator_discord_id" class="block text-xs text-gray-400 mb-1">
                 Creator Discord ID (required — admin acts on behalf)
@@ -338,7 +356,7 @@ router.get("/create", async (c) => {
                 placeholder="What are you predicting on?"
               />
             </div>
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-3 gap-4">
               <div>
                 <label for="initial_prob_pct" class="block text-xs text-gray-400 mb-1">
                   Initial probability % (1–99)
@@ -366,6 +384,35 @@ router.get("/create", async (c) => {
                   class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white"
                 />
               </div>
+              <div>
+                <label for="creator_stake" class="block text-xs text-gray-400 mb-1">
+                  Creator LP stake (min {MIN_CREATOR_STAKE}, default{" "}
+                  {DEFAULT_CREATOR_STAKE})
+                </label>
+                <input
+                  id="creator_stake"
+                  type="number"
+                  name="creator_stake"
+                  min={MIN_CREATOR_STAKE}
+                  placeholder={String(DEFAULT_CREATOR_STAKE)}
+                  class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white"
+                />
+              </div>
+            </div>
+            <div>
+              <label for="channel_id" class="block text-xs text-gray-400 mb-1">
+                Discord channel — leave unset to use the guild's default notify channel
+              </label>
+              <ChannelPicker
+                channels={channels}
+                current={defaultChannel}
+                name="channel_id"
+                id="channel_id"
+                includeNone
+                noneLabel="(default notify channel)"
+                fallbackPlaceholder="Channel ID (optional — falls back to default notify channel)"
+                fallbackHint="Load channels above to pick from a dropdown; leave blank to use the guild's default notify channel."
+              />
             </div>
             <p class="text-xs text-gray-500">
               Manual-resolution market — no auto-resolver is attached.
@@ -398,9 +445,16 @@ router.post("/create", async (c) => {
   const durationHours = durationRaw.trim()
     ? parseInt(durationRaw, 10)
     : DEFAULT_EXPIRY_HOURS;
+  const stakeRaw = (body.creator_stake as string) ?? "";
+  const stake = stakeRaw.trim() ? parseInt(stakeRaw, 10) : DEFAULT_CREATOR_STAKE;
+  const channelIdRaw = ((body.channel_id as string) ?? "").trim();
 
   const fail = (msg: string) =>
-    c.redirect(`/markets/create?error=${encodeURIComponent(msg)}`);
+    c.redirect(
+      `/markets/create?error=${encodeURIComponent(msg)}${
+        guildId ? `&guild_id=${encodeURIComponent(guildId)}` : ""
+      }`,
+    );
 
   if (!guildId) return fail("Guild ID is required.");
   if (!creatorDiscordId) return fail("Creator Discord ID is required.");
@@ -411,12 +465,19 @@ router.post("/create", async (c) => {
   if (Number.isNaN(durationHours) || durationHours < 1) {
     return fail("Duration must be a positive integer (hours).");
   }
+  if (Number.isNaN(stake) || stake < MIN_CREATOR_STAKE) {
+    return fail(`Creator stake must be an integer ≥ ${MIN_CREATOR_STAKE}.`);
+  }
+  if (channelIdRaw && !/^\d{15,25}$/.test(channelIdRaw)) {
+    return fail("Invalid channel ID.");
+  }
 
   const expiresAt = expiryIso(durationHours);
   let newId: number;
   try {
     newId = createBet(guildId, creatorDiscordId, question, expiresAt, {
       initialProb: probPctRaw / 100,
+      stake,
     });
   } catch (err) {
     return fail((err as Error).message);
@@ -430,14 +491,32 @@ router.post("/create", async (c) => {
     initialProbPct: probPctRaw,
     durationHours,
     expiresAt,
+    stake,
   });
+
+  // Post the market embed to Discord so users can interact. Fall back
+  // to the guild's configured notify channel when the form field is
+  // blank. Surface post failures as a flash so the admin can retry —
+  // the market is created either way.
+  const targetChannel = channelIdRaw || getNotifyChannel(guildId);
+  if (!targetChannel) {
+    return c.redirect(
+      `/markets/${newId}?flash=${encodeURIComponent(
+        "Market created, but no Discord channel is set. Pick one on the settings page and reuse the Post button when it lands.",
+      )}`,
+    );
+  }
   try {
-    await notifyBot({ type: "market", id: newId });
-  } catch {
-    /* non-fatal */
+    await postMarket({ betId: newId, channelId: targetChannel });
+  } catch (err) {
+    return c.redirect(
+      `/markets/${newId}?flash=${encodeURIComponent(
+        `Market created but post failed: ${(err as Error).message}`,
+      )}`,
+    );
   }
 
-  return c.redirect(`/markets/${newId}?flash=Market+created.`);
+  return c.redirect(`/markets/${newId}?flash=Market+created+and+posted+to+Discord.`);
 });
 
 router.get("/:id", async (c) => {
@@ -541,8 +620,20 @@ router.get("/:id", async (c) => {
             {bet.status === "open" && (
               <Card>
                 <H2>Admin actions</H2>
-                <form method="post" action={`/markets/${id}/cancel`}>
+                <p class="text-xs text-gray-400 mb-3">
+                  Cancels the market, refunds every wager, returns the creator's LP stake.
+                  Reason is logged to the admin audit trail.
+                </p>
+                <form method="post" action={`/markets/${id}/cancel`} class="space-y-2">
                   <HiddenCsrf token={csrf} />
+                  <textarea
+                    name="reason"
+                    required
+                    maxlength={200}
+                    rows={2}
+                    class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white"
+                    placeholder="Reason (required) — why are we cancelling?"
+                  />
                   <Btn label="Cancel & refund market" variant="danger" />
                 </form>
               </Card>
@@ -748,10 +839,17 @@ router.get("/:id", async (c) => {
 router.post("/:id/cancel", async (c) => {
   const user = c.get("user");
   const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.parseBody();
+  const reason = ((body.reason as string) ?? "").trim().slice(0, 200);
+
+  if (!reason) {
+    return c.redirect(
+      `/markets/${id}?flash=${encodeURIComponent("Reason is required.")}`,
+    );
+  }
+
   try {
     cancelBet(id);
-    logAdminAction(user.discordId, "market-cancel", `bet:${id}`, { betId: id });
-    await notifyBot({ type: "market", id });
   } catch (err) {
     return c.html(
       page(
@@ -762,6 +860,13 @@ router.post("/:id/cancel", async (c) => {
       ),
       400,
     );
+  }
+
+  logAdminAction(user.discordId, "market-cancel", `bet:${id}`, { betId: id, reason });
+  try {
+    await notifyBot({ type: "market", id });
+  } catch {
+    /* non-fatal */
   }
   return c.redirect(`/markets/${id}?flash=Market+cancelled+and+refunded.`);
 });

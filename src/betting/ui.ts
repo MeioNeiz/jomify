@@ -75,10 +75,18 @@ export const MARKET_BUTTONS = {
   },
 } as const;
 
+// Months use 30-day approximations — calendar-exact durations would
+// complicate the auto-cancel path for no meaningful user benefit (the
+// market closes *about* a month later, close enough for FRD / multi-
+// week theses). Discord caps addChoices at 25, so we stay well under.
 export const MARKET_DURATIONS: { name: string; hours: number }[] = [
   { name: "1 hour", hours: 1 },
   { name: "6 hours", hours: 6 },
   { name: "1 day", hours: 24 },
   { name: "3 days", hours: 72 },
   { name: "1 week", hours: 168 },
+  { name: "2 weeks", hours: 336 },
+  { name: "1 month", hours: 720 },
+  { name: "3 months", hours: 2160 },
+  { name: "6 months", hours: 4320 },
 ];

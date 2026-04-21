@@ -1,5 +1,6 @@
 /** @jsxImportSource hono/jsx */
 import type { Child, FC } from "hono/jsx";
+import type { IpcChannel } from "../ipc.js";
 
 // ── Status badges ────────────────────────────────────────────────────
 
@@ -143,3 +144,58 @@ export function fmtDate(s: string | null): string {
 export function truncate(s: string, n = 60): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
+
+// ── Channel picker ───────────────────────────────────────────────────
+// Renders a <select> of the guild's text/announcement channels when the
+// bot loopback answers, or a text input fallback when it doesn't. Used
+// by /settings and the create-market form.
+export const ChannelPicker: FC<{
+  channels: IpcChannel[];
+  current?: string | null;
+  name?: string;
+  id?: string;
+  includeNone?: boolean;
+  noneLabel?: string;
+  fallbackPlaceholder?: string;
+  fallbackHint?: string;
+}> = ({
+  channels,
+  current,
+  name = "notify_channel_id",
+  id = name,
+  includeNone = true,
+  noneLabel = "(none — disable notifications)",
+  fallbackPlaceholder = "e.g. 123456789012345678",
+  fallbackHint = "Bot isn't reachable or isn't in this guild — paste a channel ID manually.",
+}) => {
+  if (channels.length === 0) {
+    return (
+      <>
+        <input
+          id={id}
+          type="text"
+          name={name}
+          value={current ?? ""}
+          class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white font-mono"
+          placeholder={fallbackPlaceholder}
+        />
+        <p class="text-xs text-gray-500 mt-1">{fallbackHint}</p>
+      </>
+    );
+  }
+  return (
+    <select
+      id={id}
+      name={name}
+      class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white"
+    >
+      {includeNone && <option value="">{noneLabel}</option>}
+      {channels.map((ch) => (
+        <option value={ch.id} selected={ch.id === current}>
+          #{ch.name}
+          {ch.parentName ? ` · ${ch.parentName}` : ""}
+        </option>
+      ))}
+    </select>
+  );
+};
