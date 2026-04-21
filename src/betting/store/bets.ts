@@ -3,9 +3,10 @@ import {
   bFromStake,
   DEFAULT_CREATOR_STAKE,
   LMSR_RAKE,
+  MIN_CREATOR_STAKE,
+  perTraderBonus,
   STARTING_BALANCE,
   TRADER_BONUS_CAP,
-  tierFor,
 } from "../config.js";
 import db from "../db.js";
 import { lmsrInitShares } from "../lmsr.js";
@@ -52,7 +53,8 @@ export type CreateBetOptions = {
   // Challenge market: target Discord user + window (default 30 min).
   challengeTargetDiscordId?: string;
   challengeAcceptByMinutes?: number;
-  // Creator-LP stake tier. Defaults to DEFAULT_CREATOR_STAKE.
+  // Creator-LP stake. Plain integer ≥ MIN_CREATOR_STAKE. Defaults to
+  // DEFAULT_CREATOR_STAKE.
   stake?: number;
 };
 
@@ -67,8 +69,9 @@ export function createBet(
     options.resolverArgs === undefined ? null : JSON.stringify(options.resolverArgs);
   const initialProb = options.initialProb ?? 0.5;
   const stake = options.stake ?? DEFAULT_CREATOR_STAKE;
-  // Validates the stake is a known tier; throws otherwise.
-  tierFor(stake);
+  if (!Number.isInteger(stake) || stake < MIN_CREATOR_STAKE) {
+    throw new Error(`Stake must be an integer ≥ ${MIN_CREATOR_STAKE}`);
+  }
   const b = bFromStake(stake);
   const { qYes, qNo } = lmsrInitShares(initialProb, b);
   const challengeAcceptBy = options.challengeTargetDiscordId
@@ -412,8 +415,9 @@ function settleCreator(
   }
 
   const uniqueTraders = new Set(ws.map((w) => w.discordId)).size;
-  const { perTraderBonus } = tierFor(bet.creatorStake);
-  const bonus = Math.floor(Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus);
+  const bonus = Math.floor(
+    Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus(bet.creatorStake),
+  );
   if (bonus > 0) {
     creditInTx(
       tx,
