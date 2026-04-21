@@ -17,7 +17,7 @@ import { requireLinkedUser, wrapCommand } from "../../commands/handler.js";
 import { registerComponent } from "../../components.js";
 import { getLatestSnapshot, getSteamId, getTrackedPlayers } from "../../cs/store.js";
 import log from "../../logger.js";
-import { getActivityPings, setActivityPings } from "../../store.js";
+import { getActivityPings } from "../../store.js";
 import { embed } from "../../ui.js";
 import { fetchGammaMarket } from "../resolvers/polymarket.js";
 // Side-effect import: registers the dispute component handlers. Kept
@@ -157,61 +157,6 @@ export const data = new SlashCommandBuilder()
           .setName("duration")
           .setDescription(
             `Auto-cancel + refund if no match lands in this window (default: ${DEFAULT_EXPIRY_HOURS}h)`,
-          );
-        for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
-        return opt;
-      })
-      .addIntegerOption((opt) => {
-        opt
-          .setName("stake")
-          .setDescription(
-            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
-          );
-        for (const t of CREATOR_STAKE_TIERS) {
-          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
-        }
-        return opt;
-      }),
-  )
-  .addSubcommand((sub) =>
-    sub
-      .setName("cs-rating-goal")
-      .setDescription(
-        "Market: will a player reach a target Leetify rating by the deadline?",
-      )
-      .addUserOption((opt) =>
-        opt
-          .setName("player")
-          .setDescription("Linked Discord user to watch (must be tracked in this server)")
-          .setRequired(true),
-      )
-      .addNumberOption((opt) =>
-        opt
-          .setName("threshold")
-          .setDescription("Target Leetify rating (e.g. 0.15)")
-          .setRequired(true),
-      )
-      .addIntegerOption((opt) =>
-        opt
-          .setName("probability")
-          .setDescription("Your starting estimate for YES % (default: 50)")
-          .addChoices(
-            { name: "10%", value: 10 },
-            { name: "20%", value: 20 },
-            { name: "30%", value: 30 },
-            { name: "40%", value: 40 },
-            { name: "50% (even odds)", value: 50 },
-            { name: "60%", value: 60 },
-            { name: "70%", value: 70 },
-            { name: "80%", value: 80 },
-            { name: "90%", value: 90 },
-          ),
-      )
-      .addStringOption((opt) => {
-        opt
-          .setName("duration")
-          .setDescription(
-            `Deadline — resolves NO if rating not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
@@ -590,18 +535,6 @@ export const data = new SlashCommandBuilder()
       }),
   )
   .addSubcommand((sub) =>
-    sub
-      .setName("config")
-      .setDescription("Configure market settings for this server (admin only)")
-      .addStringOption((opt) =>
-        opt
-          .setName("activity")
-          .setDescription("Post a ping when the first YES or NO position is taken")
-          .setRequired(true)
-          .addChoices({ name: "on", value: "on" }, { name: "off", value: "off" }),
-      ),
-  )
-  .addSubcommand((sub) =>
     sub.setName("list").setDescription("Show open markets in this server"),
   );
 
@@ -808,42 +741,6 @@ async function handleCreate(interaction: ChatInputCommandInteraction, guildId: s
   }
   await interaction.editReply(renderMarketView(id));
 
-  try {
-    const msg = await interaction.fetchReply();
-    setBetMessage(id, msg.channelId, msg.id);
-  } catch (err) {
-    log.warn({ err, betId: id }, "Couldn't capture market message pointer");
-  }
-}
-
-async function handleCsRatingGoal(
-  interaction: ChatInputCommandInteraction,
-  guildId: string,
-) {
-  const resolved = await requireLinkedUser(interaction, "player");
-  if (!resolved) return;
-  const threshold = interaction.options.getNumber("threshold", true);
-
-  const tracked = new Set(getTrackedPlayers(guildId));
-  if (!tracked.has(resolved.steamId)) {
-    await interaction.editReply(
-      `${resolved.label} isn't tracked here. Add them with \`/track\` first.`,
-    );
-    return;
-  }
-
-  const question = `Will ${resolved.label} hit a Leetify rating ≥ ${threshold.toFixed(2)} before the deadline?`;
-  const probPct = interaction.options.getInteger("probability") ?? 50;
-  const durationChoice = interaction.options.getString("duration");
-  const expiresAt = expiryIso(durationHours(durationChoice));
-
-  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
-    resolverKind: "cs:rating-goal",
-    resolverArgs: { steamId: resolved.steamId, threshold },
-    initialProb: probPct / 100,
-    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
-  });
-  await interaction.editReply(renderMarketView(id));
   try {
     const msg = await interaction.fetchReply();
     setBetMessage(id, msg.channelId, msg.id);
@@ -1124,16 +1021,6 @@ async function handleChallenge(
   }
 }
 
-async function handleConfig(interaction: ChatInputCommandInteraction, guildId: string) {
-  if (!interaction.memberPermissions?.has("ManageGuild")) {
-    await interaction.editReply("Only admins can change market config.");
-    return;
-  }
-  const activity = interaction.options.getString("activity", true);
-  setActivityPings(guildId, activity === "on");
-  await interaction.editReply(`Activity pings **${activity}**.`);
-}
-
 async function handleCsPremier(
   interaction: ChatInputCommandInteraction,
   guildId: string,
@@ -1362,14 +1249,12 @@ export const execute = wrapCommand(async (interaction) => {
   }
   if (sub === "create") await handleCreate(interaction, guildId);
   else if (sub === "cs-next-match") await handleCsNextMatch(interaction, guildId);
-  else if (sub === "cs-rating-goal") await handleCsRatingGoal(interaction, guildId);
   else if (sub === "cs-premier") await handleCsPremier(interaction, guildId);
   else if (sub === "first-to") await handleFirstTo(interaction, guildId);
   else if (sub === "mirror") await handleMirror(interaction, guildId);
   else if (sub === "stock") await handleStock(interaction, guildId);
   else if (sub === "crypto") await handleCrypto(interaction, guildId);
   else if (sub === "challenge") await handleChallenge(interaction, guildId);
-  else if (sub === "config") await handleConfig(interaction, guildId);
   else if (sub === "list") await handleList(interaction, guildId);
   else await interaction.editReply(`Unknown subcommand: ${sub}`);
 });

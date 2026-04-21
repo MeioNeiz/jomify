@@ -51,7 +51,6 @@ export {
   getFirstMatchAfter,
   getMatchStatForPlayer,
   getMatchWithPremierAbove,
-  getMatchWithRatingAbove,
   getMostRecentMatchTime,
   getPlayerHistory,
   getPlayerMatchStats,

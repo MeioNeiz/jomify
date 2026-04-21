@@ -331,7 +331,7 @@ export function getExpiredOpenBets(): Array<{
         // than cancel) are excluded from auto-cancel so they can fire one last
         // check on the next tick and apply the NO verdict themselves.
         sql`(resolver_kind IS NULL OR resolver_kind NOT IN (
-          'cs:rating-goal', 'cs:premier-milestone', 'cs:win-streak', 'cs:clutch-count',
+          'cs:premier-milestone', 'cs:win-streak', 'cs:clutch-count',
           'stock:price-above', 'stock:price-below', 'stock:pct-move',
           'crypto:price-above', 'crypto:price-below', 'crypto:pct-move'
         ))`,
