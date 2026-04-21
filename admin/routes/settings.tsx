@@ -10,9 +10,9 @@ import {
 } from "../../src/store.js";
 import { adminConfig } from "../config.js";
 import { db, logAdminAction } from "../db.js";
-import { fetchGuildChannels, type IpcChannel } from "../ipc.js";
+import { fetchGuildChannels } from "../ipc.js";
 import type { Env } from "../middleware.js";
-import { Btn, Card, H1, H2, HiddenCsrf } from "../views/components.js";
+import { Btn, Card, ChannelPicker, H1, H2, HiddenCsrf } from "../views/components.js";
 import { page } from "../views/layout.js";
 
 const router = new Hono<Env>();
@@ -66,47 +66,6 @@ router.get("/", async (c) => {
 });
 
 // ── Single-guild settings ────────────────────────────────────────────
-
-function ChannelPicker({
-  channels,
-  current,
-}: {
-  channels: IpcChannel[];
-  current: string | null;
-}) {
-  if (channels.length === 0) {
-    return (
-      <>
-        <input
-          id="notify_channel_id"
-          type="text"
-          name="notify_channel_id"
-          value={current ?? ""}
-          class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white font-mono"
-          placeholder="e.g. 123456789012345678"
-        />
-        <p class="text-xs text-gray-500 mt-1">
-          Bot isn't reachable or isn't in this guild — paste a channel ID manually.
-        </p>
-      </>
-    );
-  }
-  return (
-    <select
-      id="notify_channel_id"
-      name="notify_channel_id"
-      class="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm w-full text-white"
-    >
-      <option value="">(none — disable notifications)</option>
-      {channels.map((ch) => (
-        <option value={ch.id} selected={ch.id === current}>
-          #{ch.name}
-          {ch.parentName ? ` · ${ch.parentName}` : ""}
-        </option>
-      ))}
-    </select>
-  );
-}
 
 router.get("/:guildId", async (c) => {
   const user = c.get("user");

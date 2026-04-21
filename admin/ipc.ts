@@ -18,6 +18,29 @@ export async function notifyBot(payload: {
   }
 }
 
+/**
+ * Ask the bot to post an admin-created market embed to a Discord
+ * channel and wire up its buttons. Throws on failure so the admin page
+ * can surface a flash — unlike `notifyBot`, this is not fire-and-forget
+ * since an unposted market is invisible to users.
+ */
+export async function postMarket(payload: {
+  betId: number;
+  channelId: string;
+}): Promise<void> {
+  const port = process.env.INTERNAL_PORT ?? "3001";
+  const res = await fetch(`http://127.0.0.1:${port}/post-market`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(body || `Bot returned ${res.status}`);
+  }
+}
+
 export type IpcChannel = {
   id: string;
   name: string;
