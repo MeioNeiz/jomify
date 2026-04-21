@@ -1,8 +1,17 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { LMSR_B, LMSR_RAKE } from "../config.js";
+import {
+  bFromStake,
+  DEFAULT_CREATOR_STAKE,
+  LMSR_RAKE,
+  STARTING_BALANCE,
+  TRADER_BONUS_CAP,
+  tierFor,
+} from "../config.js";
 import db from "../db.js";
 import { lmsrInitShares } from "../lmsr.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export type Outcome = "yes" | "no";
 export type BetStatus = "open" | "resolved" | "cancelled";
@@ -30,6 +39,9 @@ export type Bet = {
   // Challenge market: null on regular markets.
   challengeTargetDiscordId: string | null;
   challengeAcceptBy: string | null;
+  // Creator-as-LP escrow. 0 on legacy rows.
+  creatorStake: number;
+  creatorSettled: number;
 };
 
 export type CreateBetOptions = {
@@ -40,6 +52,8 @@ export type CreateBetOptions = {
   // Challenge market: target Discord user + window (default 30 min).
   challengeTargetDiscordId?: string;
   challengeAcceptByMinutes?: number;
+  // Creator-LP stake tier. Defaults to DEFAULT_CREATOR_STAKE.
+  stake?: number;
 };
 
 export function createBet(
@@ -52,34 +66,80 @@ export function createBet(
   const resolverArgs =
     options.resolverArgs === undefined ? null : JSON.stringify(options.resolverArgs);
   const initialProb = options.initialProb ?? 0.5;
-  const { qYes, qNo } = lmsrInitShares(initialProb, LMSR_B);
+  const stake = options.stake ?? DEFAULT_CREATOR_STAKE;
+  // Validates the stake is a known tier; throws otherwise.
+  tierFor(stake);
+  const b = bFromStake(stake);
+  const { qYes, qNo } = lmsrInitShares(initialProb, b);
   const challengeAcceptBy = options.challengeTargetDiscordId
     ? new Date(Date.now() + (options.challengeAcceptByMinutes ?? 30) * 60_000)
         .toISOString()
         .replace("T", " ")
         .replace(/\..+$/, "")
     : null;
-  const row = db
-    .insert(bets)
-    .values({
-      guildId,
-      question,
-      creatorDiscordId,
-      status: "open",
-      expiresAt,
-      resolverKind: options.resolverKind ?? null,
-      resolverArgs,
-      resolverState: null,
-      initialProb,
-      b: LMSR_B,
-      qYes,
-      qNo,
-      challengeTargetDiscordId: options.challengeTargetDiscordId ?? null,
-      challengeAcceptBy,
-    })
-    .returning({ id: bets.id })
-    .get();
-  return row.id;
+  return db.transaction((tx) => {
+    // Lazy-create the creator's wallet so first-time creators land on
+    // STARTING_BALANCE + starting-grant before we debit the stake.
+    const existing = tx
+      .select({ balance: accounts.balance })
+      .from(accounts)
+      .where(and(eq(accounts.discordId, creatorDiscordId), eq(accounts.guildId, guildId)))
+      .get();
+    if (existing == null) {
+      tx.insert(accounts)
+        .values({ discordId: creatorDiscordId, guildId, balance: STARTING_BALANCE })
+        .run();
+      tx.insert(ledger)
+        .values({
+          discordId: creatorDiscordId,
+          guildId,
+          delta: STARTING_BALANCE,
+          reason: "starting-grant",
+          ref: null,
+        })
+        .run();
+    }
+    const current = existing?.balance ?? STARTING_BALANCE;
+    if (current < stake) {
+      throw new Error(`Insufficient balance: have ${current}, need ${stake} to stake`);
+    }
+    tx.update(accounts)
+      .set({ balance: current - stake })
+      .where(and(eq(accounts.discordId, creatorDiscordId), eq(accounts.guildId, guildId)))
+      .run();
+    const row = tx
+      .insert(bets)
+      .values({
+        guildId,
+        question,
+        creatorDiscordId,
+        status: "open",
+        expiresAt,
+        resolverKind: options.resolverKind ?? null,
+        resolverArgs,
+        resolverState: null,
+        initialProb,
+        b,
+        qYes,
+        qNo,
+        challengeTargetDiscordId: options.challengeTargetDiscordId ?? null,
+        challengeAcceptBy,
+        creatorStake: stake,
+        creatorSettled: 0,
+      })
+      .returning({ id: bets.id })
+      .get();
+    tx.insert(ledger)
+      .values({
+        discordId: creatorDiscordId,
+        guildId,
+        delta: -stake,
+        reason: "creator-stake",
+        ref: String(row.id),
+      })
+      .run();
+    return row.id;
+  });
 }
 
 /** Persist the resolver's scratchpad after a poll tick. */
@@ -124,6 +184,8 @@ function toBet(row: BetRow): Bet {
     qNo: row.qNo,
     challengeTargetDiscordId: row.challengeTargetDiscordId,
     challengeAcceptBy: row.challengeAcceptBy,
+    creatorStake: row.creatorStake,
+    creatorSettled: row.creatorSettled,
   };
 }
 
@@ -143,6 +205,84 @@ export function extendBet(betId: number, newExpiresAt: string | null): void {
     if (bet.status !== "open") throw new Error(`Bet ${betId} is not open`);
     tx.update(bets).set({ expiresAt: newExpiresAt }).where(eq(bets.id, betId)).run();
   });
+}
+
+export type CreatorStats = {
+  marketsCreated: number;
+  stakeDeployed: number;
+  lifetimeSettle: number;
+  lifetimeBonus: number;
+  netPnL: number;
+};
+
+/**
+ * Creator-LP lifetime stats for a user in a guild. Backs `/creator-stats`
+ * and the admin P&L column. Aggregates the three LP ledger reasons
+ * instead of walking bets — cheaper and always agrees with balance.
+ */
+export function getCreatorStats(discordId: string, guildId: string): CreatorStats {
+  const stakeDeployedRow = db
+    .select({
+      total: sql<number>`COALESCE(SUM(-${ledger.delta}), 0)`,
+    })
+    .from(ledger)
+    .where(
+      and(
+        eq(ledger.discordId, discordId),
+        eq(ledger.guildId, guildId),
+        eq(ledger.reason, "creator-stake"),
+      ),
+    )
+    .get();
+  const settleRow = db
+    .select({
+      total: sql<number>`COALESCE(SUM(${ledger.delta}), 0)`,
+    })
+    .from(ledger)
+    .where(
+      and(
+        eq(ledger.discordId, discordId),
+        eq(ledger.guildId, guildId),
+        eq(ledger.reason, "creator-settle"),
+      ),
+    )
+    .get();
+  const bonusRow = db
+    .select({
+      total: sql<number>`COALESCE(SUM(${ledger.delta}), 0)`,
+    })
+    .from(ledger)
+    .where(
+      and(
+        eq(ledger.discordId, discordId),
+        eq(ledger.guildId, guildId),
+        eq(ledger.reason, "creator-trader-bonus"),
+      ),
+    )
+    .get();
+  const marketsRow = db
+    .select({
+      n: sql<number>`COUNT(*)`,
+    })
+    .from(bets)
+    .where(
+      and(
+        eq(bets.guildId, guildId),
+        eq(bets.creatorDiscordId, discordId),
+        sql`${bets.creatorStake} > 0`,
+      ),
+    )
+    .get();
+  const stakeDeployed = stakeDeployedRow?.total ?? 0;
+  const lifetimeSettle = settleRow?.total ?? 0;
+  const lifetimeBonus = bonusRow?.total ?? 0;
+  return {
+    marketsCreated: marketsRow?.n ?? 0,
+    stakeDeployed,
+    lifetimeSettle,
+    lifetimeBonus,
+    netPnL: lifetimeSettle + lifetimeBonus - stakeDeployed,
+  };
 }
 
 /** Open bets in a guild, newest first. */
@@ -200,18 +340,107 @@ export function getExpiredOpenBets(): Array<{
     .all();
 }
 
+/** Credit helper scoped to a transaction + bet — inline so the same
+ * transaction owns both the balance mutation and the audit row. */
+function creditInTx(
+  tx: Tx,
+  guildId: string,
+  discordId: string,
+  amount: number,
+  reason: string,
+  ref: string,
+): void {
+  const acct = tx
+    .select({ balance: accounts.balance })
+    .from(accounts)
+    .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
+    .get();
+  const current = acct?.balance ?? 0;
+  if (acct == null) {
+    tx.insert(accounts).values({ discordId, guildId, balance: amount }).run();
+  } else {
+    tx.update(accounts)
+      .set({ balance: current + amount })
+      .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
+      .run();
+  }
+  tx.insert(ledger).values({ discordId, guildId, delta: amount, reason, ref }).run();
+}
+
+/**
+ * Creator-LP settlement. Pays the creator their trading P&L (stake ±
+ * LMSR shortfall/rake) and the engagement bonus from protocol reserve.
+ * No-op on legacy rows (creator_stake = 0) so old house-subsidy markets
+ * are untouched. Idempotent via creator_settled — reopen clears the
+ * flag so re-resolve can replay cleanly.
+ */
+function settleCreator(
+  tx: Tx,
+  bet: BetRow,
+  mode: "cancel" | "resolve",
+  winningOutcome: Outcome | null,
+): void {
+  if (bet.creatorSettled) return;
+  if (bet.creatorStake === 0) return;
+
+  const ws = tx.select().from(wagers).where(eq(wagers.betId, bet.id)).all();
+
+  // Trading P&L: on cancel every wager is refunded so the pool nets
+  // to zero and the creator just gets their stake back. On resolve the
+  // pool minus winner payouts lands as the creator's take — bounded
+  // below by 0 as the LMSR max-loss guarantee.
+  let tradingPnL: number;
+  if (mode === "cancel") {
+    tradingPnL = bet.creatorStake;
+  } else {
+    const totalStakes = ws.reduce((s, w) => s + w.amount, 0);
+    const totalPayouts = ws
+      .filter((w) => w.outcome === winningOutcome)
+      .reduce((s, w) => s + Math.floor(w.shares * (1 - LMSR_RAKE)), 0);
+    tradingPnL = Math.max(0, bet.creatorStake + totalStakes - totalPayouts);
+  }
+
+  if (tradingPnL > 0) {
+    creditInTx(
+      tx,
+      bet.guildId,
+      bet.creatorDiscordId,
+      tradingPnL,
+      "creator-settle",
+      String(bet.id),
+    );
+  }
+
+  const uniqueTraders = new Set(ws.map((w) => w.discordId)).size;
+  const { perTraderBonus } = tierFor(bet.creatorStake);
+  const bonus = Math.floor(Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus);
+  if (bonus > 0) {
+    creditInTx(
+      tx,
+      bet.guildId,
+      bet.creatorDiscordId,
+      bonus,
+      "creator-trader-bonus",
+      String(bet.id),
+    );
+  }
+
+  tx.update(bets).set({ creatorSettled: 1 }).where(eq(bets.id, bet.id)).run();
+}
+
 /**
  * Resolve a bet to the given outcome.
  *
- * LMSR markets (b > 0): each winner receives floor(shares × (1 − rake))
- * shekels. The house covers any gap between payouts due and actual stakes
- * collected; this gap is bounded at b × ln(2) ≈ 20.8 shekels for b=30.
- * A 2% rake on winning shares partially offsets the subsidy over time.
+ * Creator-LP markets (creator_stake > 0): winners receive
+ * floor(shares × (1 − rake)) shekels. Losers lose — creator pockets
+ * the pool minus payouts as trading P&L (bounded by the stake).
+ * Per-trader engagement bonus added from protocol reserve.
  *
- * Legacy pari-mutuel markets (b = 0): original proportional-split logic,
- * unchanged so existing open markets settle correctly.
+ * Legacy LMSR (b > 0, no creator stake): same LMSR payout path but
+ * losers are refunded when no one picked the winning side (old
+ * house-subsidy behaviour preserved for already-open markets).
  *
- * In both cases, if no one picked the winning side all losers are refunded.
+ * Legacy pari-mutuel (b = 0): original proportional-split logic.
  */
 export function resolveBet(betId: number, winningOutcome: Outcome): void {
   db.transaction((tx) => {
@@ -224,27 +453,20 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
     const losers = rows.filter((w) => w.outcome !== winningOutcome);
 
     const guildId = bet.guildId;
-    function credit(discordId: string, amount: number, reason: string) {
-      const acct = tx
-        .select({ balance: accounts.balance })
-        .from(accounts)
-        .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
-        .get();
-      const current = acct?.balance ?? 0;
-      tx.update(accounts)
-        .set({ balance: current + amount })
-        .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
-        .run();
-      tx.insert(ledger)
-        .values({ discordId, guildId, delta: amount, reason, ref: String(betId) })
-        .run();
-    }
+    const credit = (discordId: string, amount: number, reason: string) =>
+      creditInTx(tx, guildId, discordId, amount, reason, String(betId));
 
-    if (winners.length === 0) {
+    if (bet.creatorStake > 0) {
+      // Creator-LP LMSR: winners get floor(shares × (1 − rake)).
+      // Losers (including the all-loser-side case) keep nothing —
+      // the pool flows to the creator via settleCreator.
+      for (const w of winners) {
+        const payout = Math.floor(w.shares * (1 - LMSR_RAKE));
+        if (payout > 0) credit(w.discordId, payout, "bet-payout");
+      }
+    } else if (winners.length === 0) {
       for (const w of losers) credit(w.discordId, w.amount, "bet-refund");
     } else if (bet.b > 0) {
-      // LMSR: each winner gets floor(shares × (1 − rake)) shekels.
-      // House absorbs any shortfall (bounded by b × ln(2)).
       for (const w of winners) {
         const payout = Math.floor(w.shares * (1 - LMSR_RAKE));
         if (payout > 0) credit(w.discordId, payout, "bet-payout");
@@ -259,6 +481,8 @@ export function resolveBet(betId: number, winningOutcome: Outcome): void {
         credit(w.discordId, w.amount + winnings, "bet-payout");
       }
     }
+
+    settleCreator(tx, bet, "resolve", winningOutcome);
 
     tx.update(bets)
       .set({ status: "resolved", winningOutcome, resolvedAt: sql`(datetime('now'))` })
@@ -291,7 +515,13 @@ export function reopenBet(betId: number): void {
       .where(
         and(
           eq(ledger.ref, String(betId)),
-          inArray(ledger.reason, ["bet-payout", "bet-refund", "bet-cancel"]),
+          inArray(ledger.reason, [
+            "bet-payout",
+            "bet-refund",
+            "bet-cancel",
+            "creator-settle",
+            "creator-trader-bonus",
+          ]),
         ),
       )
       .all();
@@ -319,8 +549,15 @@ export function reopenBet(betId: number): void {
         })
         .run();
     }
+    // Clear the settled flag so the next resolve/cancel re-runs
+    // settleCreator with the corrected outcome.
     tx.update(bets)
-      .set({ status: "open", winningOutcome: null, resolvedAt: null })
+      .set({
+        status: "open",
+        winningOutcome: null,
+        resolvedAt: null,
+        creatorSettled: 0,
+      })
       .where(eq(bets.id, betId))
       .run();
   });
@@ -341,26 +578,9 @@ export function cancelBet(betId: number): void {
     const guildId = bet.guildId;
     const rows = tx.select().from(wagers).where(eq(wagers.betId, betId)).all();
     for (const w of rows) {
-      const acct = tx
-        .select({ balance: accounts.balance })
-        .from(accounts)
-        .where(and(eq(accounts.discordId, w.discordId), eq(accounts.guildId, guildId)))
-        .get();
-      const current = acct?.balance ?? 0;
-      tx.update(accounts)
-        .set({ balance: current + w.amount })
-        .where(and(eq(accounts.discordId, w.discordId), eq(accounts.guildId, guildId)))
-        .run();
-      tx.insert(ledger)
-        .values({
-          discordId: w.discordId,
-          guildId,
-          delta: w.amount,
-          reason: "bet-cancel",
-          ref: String(betId),
-        })
-        .run();
+      creditInTx(tx, guildId, w.discordId, w.amount, "bet-cancel", String(betId));
     }
+    settleCreator(tx, bet, "cancel", null);
     tx.update(bets)
       .set({ status: "cancelled", resolvedAt: sql`(datetime('now'))` })
       .where(eq(bets.id, betId))

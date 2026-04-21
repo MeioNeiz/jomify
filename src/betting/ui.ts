@@ -68,6 +68,11 @@ export const MARKET_BUTTONS = {
     emoji: "\u23F0", // ⏰
     label: "Extend",
   },
+  sell: {
+    style: ButtonStyle.Secondary,
+    emoji: "\uD83D\uDCB0", // 💰
+    label: "Sell position",
+  },
 } as const;
 
 export const MARKET_DURATIONS: { name: string; hours: number }[] = [

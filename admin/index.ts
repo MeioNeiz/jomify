@@ -13,6 +13,7 @@ import dashboardRoute from "./routes/dashboard.js";
 import disputesRoute from "./routes/disputes.js";
 import ledgerRoute from "./routes/ledger.js";
 import marketsRoute from "./routes/markets.js";
+import settingsRoute from "./routes/settings.js";
 import usersRoute from "./routes/users.js";
 
 const app = new Hono<Env>();
@@ -78,6 +79,7 @@ app.route("/markets", marketsRoute);
 app.route("/disputes", disputesRoute);
 app.route("/users", usersRoute);
 app.route("/ledger", ledgerRoute);
+app.route("/settings", settingsRoute);
 
 // ── Start server ──────────────────────────────────────────────────────
 

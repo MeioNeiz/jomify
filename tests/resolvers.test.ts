@@ -163,6 +163,9 @@ describe("resolver poller", () => {
         return { kind: "pending" };
       },
     });
+    // Two createBet calls in one test — seed the creator beyond the
+    // single-market STARTING_BALANCE so both stakes can escrow.
+    adjustBalance(CREATOR, GUILD, 10, "seed");
     makeResolverBet("test:boom", {});
     makeResolverBet("test:ok", {});
     await tick(fakeClient);

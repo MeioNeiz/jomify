@@ -44,26 +44,54 @@ export const PENALTY_LOSS_STREAK = 1;
 export const WEEKLY_ARCHIVE_RANKS = 5;
 
 // Cost to open a dispute on a resolved market. Deducted from the
-// opener's wallet on Report submit; goes to the house, not refunded
-// even on a successful overturn. Keeps drive-by reporting cheap
-// enough to stay useful but not free.
+// opener's wallet on Report submit. Refunded in full if the dispute
+// is upheld (flip-yes / flip-no / cancel rulings); forfeit on "keep"
+// so drive-by reports still cost something.
 export const DISPUTE_COST = 5;
 
 // LMSR market parameters.
 //
-// LMSR_B controls liquidity depth. The market maker's maximum loss per
-// binary market is bounded at LMSR_B × ln(2) ≈ 0.693 × LMSR_B shekels
-// regardless of how participants bet. At 30, worst-case house cost ≈ 20.8
-// shekels/market. Larger b → smoother price curve, higher house exposure.
-//
 // LMSR_RAKE is deducted from winning shares at resolution (e.g. 0.02 = 2%).
-// Over a market's lifetime it offsets a portion of the house subsidy.
+// Under the creator-LP model this falls out as the creator's trading
+// profit on balanced markets rather than house revenue.
 //
 // DEFAULT_EXPIRY_HOURS: markets auto-cancel after this long if not manually
 // resolved. Keeps the market list tidy; creators can override at creation.
-export const LMSR_B = 30;
 export const LMSR_RAKE = 0.02;
 export const DEFAULT_EXPIRY_HOURS = 72;
+
+// Creator-as-LP tiers. Stake is escrowed from the creator's balance at
+// createBet; `b = stake / ln 2` guarantees max creator loss == stake.
+// Per-trader bonus rewards engagement (not notional), paid from the
+// protocol reserve at settlement, capped at TRADER_BONUS_CAP traders.
+export const CREATOR_STAKE_TIERS = [
+  { stake: 5, perTraderBonus: 0.2 },
+  { stake: 20, perTraderBonus: 1 },
+  { stake: 100, perTraderBonus: 5 },
+] as const;
+export type CreatorStakeTier = (typeof CREATOR_STAKE_TIERS)[number]["stake"];
+
+export const TRADER_BONUS_CAP = 50;
+
+// Smallest tier — used as the default for every create path until
+// per-command tier selection lands in phase 2.
+export const DEFAULT_CREATOR_STAKE: CreatorStakeTier = 5;
+
+// Challenge markets deserve more than the floor tier — the challenge
+// itself is the market, so gatekeep with a tier-20 minimum.
+export const CHALLENGE_MIN_STAKE: CreatorStakeTier = 20;
+
+/** LMSR liquidity depth derived from the creator's stake (max loss == stake). */
+export function bFromStake(stake: number): number {
+  return stake / Math.LN2;
+}
+
+/** Lookup a tier by its stake amount. Throws on unknown values. */
+export function tierFor(stake: number): (typeof CREATOR_STAKE_TIERS)[number] {
+  const tier = CREATOR_STAKE_TIERS.find((t) => t.stake === stake);
+  if (!tier) throw new Error(`Unknown stake tier ${stake}`);
+  return tier;
+}
 
 // Auto-extend: when a wager lands within AUTO_EXTEND_THRESHOLD_HOURS of
 // the deadline, push it forward by AUTO_EXTEND_ON_BET_HOURS from now.

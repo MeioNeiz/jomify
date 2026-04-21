@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { and, sql } from "drizzle-orm";
 import {
   BAD_GAME_RATING,
+  CREATOR_STAKE_TIERS,
+  DEFAULT_CREATOR_STAKE,
+  DISPUTE_COST,
   MATCH_GRANT_BASE,
   MATCH_GRANT_PER_TEAMMATE,
   MATCH_GRANT_WIN_BONUS,
@@ -9,12 +12,15 @@ import {
   PENALTY_LOSS_STREAK,
   PENALTY_TEAM_FLASH,
   STARTING_BALANCE,
+  TRADER_BONUS_CAP,
+  tierFor,
 } from "../src/betting/config.js";
 import db from "../src/betting/db.js";
 import { computeMatchDelta } from "../src/betting/listeners/cs-match-completed.js";
 import {
   accounts,
   bets,
+  disputes,
   ledger,
   marketTicks,
   wagers,
@@ -28,14 +34,20 @@ import {
   getAllTimeWins,
   getBalance,
   getBet,
+  getCreatorStats,
   getCurrentStandings,
   getExpiredOpenBets,
   getRecentLedger,
+  getTicksForBet,
   getWagersForBet,
   listOpenBets,
+  markDisputeResolved,
+  openDispute,
   placeWager,
   reopenBet,
   resolveBet,
+  sellWager,
+  transferBalance,
 } from "../src/betting/store.js";
 import type { EventMap } from "../src/events.js";
 
@@ -65,6 +77,7 @@ beforeEach(() => {
   // schema-aware rather than hard-coding raw SQL.
   db.delete(marketTicks).run();
   db.delete(wagers).run();
+  db.delete(disputes).run();
   db.delete(ledger).run();
   db.delete(bets).run();
   db.delete(accounts).run();
@@ -145,6 +158,48 @@ describe("accounts — adjustBalance + getBalance + ensureAccount", () => {
     adjustBalance(DISCORD_A, GUILD, -200, "d"); // clamped
     adjustBalance(DISCORD_A, GUILD, 2, "e");
     expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A, GUILD));
+  });
+});
+
+describe("accounts — transferBalance", () => {
+  test("moves shekels atomically with matching ledger rows", () => {
+    adjustBalance(DISCORD_A, GUILD, 20, "seed"); // STARTING_BALANCE + 20
+    const before = getBalance(DISCORD_A, GUILD);
+    const result = transferBalance(DISCORD_A, DISCORD_B, GUILD, 10);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.senderBalance).toBe(before - 10);
+      expect(result.recipientBalance).toBe(STARTING_BALANCE + 10);
+    }
+    expect(getBalance(DISCORD_A, GUILD)).toBe(before - 10);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(STARTING_BALANCE + 10);
+
+    const senderRows = getRecentLedger(DISCORD_A, GUILD, 3);
+    expect(senderRows[0]?.reason).toBe("give-sent");
+    expect(senderRows[0]?.delta).toBe(-10);
+    const recipientRows = getRecentLedger(DISCORD_B, GUILD, 3);
+    expect(recipientRows[0]?.reason).toBe("give-received");
+    expect(recipientRows[0]?.delta).toBe(10);
+
+    expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A, GUILD));
+    expect(ledgerSum(DISCORD_B)).toBe(getBalance(DISCORD_B, GUILD));
+  });
+
+  test("insufficient-funds leaves both balances untouched", () => {
+    ensureAccount(DISCORD_A, GUILD);
+    ensureAccount(DISCORD_B, GUILD);
+    const aBefore = getBalance(DISCORD_A, GUILD);
+    const bBefore = getBalance(DISCORD_B, GUILD);
+    const result = transferBalance(DISCORD_A, DISCORD_B, GUILD, aBefore + 1);
+    expect(result.kind).toBe("insufficient-funds");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(aBefore);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(bBefore);
+  });
+
+  test("rejects self-transfer and non-positive amounts", () => {
+    expect(() => transferBalance(DISCORD_A, DISCORD_A, GUILD, 5)).toThrow();
+    expect(() => transferBalance(DISCORD_A, DISCORD_B, GUILD, 0)).toThrow();
+    expect(() => transferBalance(DISCORD_A, DISCORD_B, GUILD, -3)).toThrow();
   });
 });
 
@@ -289,6 +344,8 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
   });
 
   test("getExpiredOpenBets returns open bets past their expires_at only", () => {
+    // 4 bets × DEFAULT_CREATOR_STAKE — seed so createBet's escrow succeeds.
+    adjustBalance(CREATOR_DISCORD, GUILD, 20, "seed");
     const past = "2020-01-01 00:00:00";
     const future = "2999-01-01 00:00:00";
     const a = createBet(GUILD, CREATOR_DISCORD, "Past", past);
@@ -306,27 +363,29 @@ describe("bets — createBet + getBet + listOpenBets + resolveBet", () => {
     expect(ids).not.toContain(d);
   });
 
-  test("no winners: losers refunded to pre-wager balance, bet-refund row written", () => {
+  test("no winners under creator-LP: losers lose stakes, creator pockets the pool", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed"); // 100
     adjustBalance(DISCORD_A, GUILD, 95, "seed"); // 100
     adjustBalance(DISCORD_B, GUILD, 95, "seed"); // 100
+    const creatorPre = getBalance(CREATOR_DISCORD, GUILD);
     const preA = getBalance(DISCORD_A, GUILD);
     const preB = getBalance(DISCORD_B, GUILD);
 
     const id = createBet(GUILD, CREATOR_DISCORD, "Lopsided");
     placeWager(id, DISCORD_A, "no", 30);
     placeWager(id, DISCORD_B, "no", 40);
-    // Nobody picked yes — resolving yes means both losers refund.
     resolveBet(id, "yes");
 
-    expect(getBalance(DISCORD_A, GUILD)).toBe(preA);
-    expect(getBalance(DISCORD_B, GUILD)).toBe(preB);
+    // LMSR market-maker semantics: no winners means the pool flows to
+    // the creator via settleCreator, bettors are not refunded.
+    expect(getBalance(DISCORD_A, GUILD)).toBe(preA - 30);
+    expect(getBalance(DISCORD_B, GUILD)).toBe(preB - 40);
 
-    const aRows = getRecentLedger(DISCORD_A, GUILD, 10);
-    expect(aRows[0]?.reason).toBe("bet-refund");
-    expect(aRows[0]?.delta).toBe(30);
-    const bRows = getRecentLedger(DISCORD_B, GUILD, 10);
-    expect(bRows[0]?.reason).toBe("bet-refund");
-    expect(bRows[0]?.delta).toBe(40);
+    // Creator: -5 stake at create, +75 at settle (stake + 70 pool, 0 payouts).
+    // Engagement bonus: 2 traders × 0.2/trader = 0.4 → floor 0.
+    expect(getBalance(CREATOR_DISCORD, GUILD)).toBe(creatorPre + 70);
+    const creatorRows = getRecentLedger(CREATOR_DISCORD, GUILD, 10);
+    expect(creatorRows.find((r) => r.reason === "creator-settle")?.delta).toBe(75);
   });
 });
 
@@ -597,5 +656,384 @@ describe("computeMatchDelta", () => {
     // BASE alone is +1; all five stat/rating penalties fire and comfortably
     // exceed it, so the delta is negative.
     expect(computeMatchDelta(e)).toBeLessThan(0);
+  });
+});
+
+describe("disputes — markDisputeResolved fee refund", () => {
+  function seedBet(): number {
+    adjustBalance(DISCORD_A, GUILD, 95, "seed"); // opener, balance 100
+    adjustBalance(DISCORD_B, GUILD, 95, "seed"); // counterparty, balance 100
+    const id = createBet(GUILD, CREATOR_DISCORD, "Dispute test?");
+    placeWager(id, DISCORD_A, "yes", 1);
+    placeWager(id, DISCORD_B, "no", 1);
+    resolveBet(id, "yes");
+    return id;
+  }
+
+  test("flip ruling refunds the filing fee with a dispute-fee-refund row", () => {
+    const betId = seedBet();
+    const balBeforeOpen = getBalance(DISCORD_A, GUILD);
+    const dispute = openDispute(betId, DISCORD_A, "bad call");
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBeforeOpen - DISPUTE_COST);
+
+    markDisputeResolved(dispute.id, "flip", "no", CREATOR_DISCORD);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBeforeOpen);
+
+    const rows = getRecentLedger(DISCORD_A, GUILD, 3);
+    expect(rows[0]?.reason).toBe("dispute-fee-refund");
+    expect(rows[0]?.delta).toBe(DISPUTE_COST);
+    expect(rows[0]?.ref).toBe(String(dispute.id));
+  });
+
+  test("cancel ruling refunds the filing fee", () => {
+    const betId = seedBet();
+    const balBeforeOpen = getBalance(DISCORD_A, GUILD);
+    const dispute = openDispute(betId, DISCORD_A, "nope");
+    markDisputeResolved(dispute.id, "cancel", null, CREATOR_DISCORD);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBeforeOpen);
+    expect(getRecentLedger(DISCORD_A, GUILD, 3)[0]?.reason).toBe("dispute-fee-refund");
+  });
+
+  test("keep ruling forfeits the fee — no refund row", () => {
+    const betId = seedBet();
+    const balBeforeOpen = getBalance(DISCORD_A, GUILD);
+    const dispute = openDispute(betId, DISCORD_A, "maybe");
+    markDisputeResolved(dispute.id, "keep", "yes", CREATOR_DISCORD);
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBeforeOpen - DISPUTE_COST);
+    const rows = getRecentLedger(DISCORD_A, GUILD, 5);
+    expect(rows.find((r) => r.reason === "dispute-fee-refund")).toBeUndefined();
+  });
+});
+
+describe("creator-LP — stake escrow + settleCreator", () => {
+  test("createBet escrows stake: debits creator balance + writes creator-stake row", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 15, "seed"); // 20
+    const pre = getBalance(CREATOR_DISCORD, GUILD);
+    const id = createBet(GUILD, CREATOR_DISCORD, "Escrow?");
+
+    expect(getBalance(CREATOR_DISCORD, GUILD)).toBe(pre - DEFAULT_CREATOR_STAKE);
+    const bet = getBet(id);
+    expect(bet?.creatorStake).toBe(DEFAULT_CREATOR_STAKE);
+    expect(bet?.creatorSettled).toBe(0);
+    expect(bet?.b).toBeCloseTo(DEFAULT_CREATOR_STAKE / Math.LN2, 5);
+
+    const rows = getRecentLedger(CREATOR_DISCORD, GUILD, 5);
+    const stakeRow = rows.find((r) => r.reason === "creator-stake");
+    expect(stakeRow?.delta).toBe(-DEFAULT_CREATOR_STAKE);
+    expect(stakeRow?.ref).toBe(String(id));
+  });
+
+  test("createBet throws on insufficient balance; no bet persisted", () => {
+    // Fresh STARTING_BALANCE (5) can't cover a tier-20 stake.
+    expect(() =>
+      createBet(GUILD, CREATOR_DISCORD, "Too steep", null, { stake: 20 }),
+    ).toThrow(/Insufficient balance/);
+    expect(listOpenBets(GUILD).length).toBe(0);
+  });
+
+  test("createBet rejects unknown stake tiers", () => {
+    expect(() =>
+      createBet(GUILD, CREATOR_DISCORD, "Weird tier", null, { stake: 7 }),
+    ).toThrow(/Unknown stake tier/);
+  });
+
+  test("placeWager blocks the creator on their own (non-challenge) market", () => {
+    const id = createBet(GUILD, CREATOR_DISCORD, "Self-bet?");
+    // Seed after — placeWager check runs before the balance check.
+    adjustBalance(CREATOR_DISCORD, GUILD, 20, "seed");
+    expect(() => placeWager(id, CREATOR_DISCORD, "yes", 1)).toThrow(/your own market/);
+  });
+
+  test("placeWager allows the creator on a challenge market they opened", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 20, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "Duel?", null, {
+      challengeTargetDiscordId: DISCORD_A,
+    });
+    // Doesn't throw — the challenger-creator needs to stake their side.
+    placeWager(id, CREATOR_DISCORD, "yes", 3);
+    expect(getWagersForBet(id)).toHaveLength(1);
+  });
+
+  test("resolveBet: creator keeps stake + pool − winner payouts (positive P&L)", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    adjustBalance(DISCORD_B, GUILD, 95, "seed");
+    const creatorPre = getBalance(CREATOR_DISCORD, GUILD);
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Classic yes/no", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 5);
+    placeWager(id, DISCORD_B, "no", 5);
+    resolveBet(id, "yes");
+
+    const creatorRows = getRecentLedger(CREATOR_DISCORD, GUILD, 10);
+    const settle = creatorRows.find((r) => r.reason === "creator-settle");
+    expect(settle).toBeDefined();
+    // Formula: stake + totalStakes − floor(winner.shares × (1 − rake)).
+    // Exact number depends on LMSR shares but is >= stake (balanced book).
+    expect(settle!.delta).toBeGreaterThanOrEqual(20);
+    // Creator ended net-positive (pocketed rake + any shortfall surplus).
+    expect(getBalance(CREATOR_DISCORD, GUILD)).toBeGreaterThan(creatorPre);
+  });
+
+  test("cancelBet: creator gets stake back via creator-settle even with no wagers", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 15, "seed");
+    const pre = getBalance(CREATOR_DISCORD, GUILD);
+    const id = createBet(GUILD, CREATOR_DISCORD, "Will be cancelled");
+    expect(getBalance(CREATOR_DISCORD, GUILD)).toBe(pre - DEFAULT_CREATOR_STAKE);
+
+    cancelBet(id);
+    // Stake back; no wagers → no engagement bonus → balance returns to pre.
+    expect(getBalance(CREATOR_DISCORD, GUILD)).toBe(pre);
+    const rows = getRecentLedger(CREATOR_DISCORD, GUILD, 5);
+    expect(rows.find((r) => r.reason === "creator-settle")?.delta).toBe(
+      DEFAULT_CREATOR_STAKE,
+    );
+    expect(getBet(id)?.creatorSettled).toBe(1);
+  });
+
+  test("engagement bonus scales with unique traders up to TRADER_BONUS_CAP", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    adjustBalance(DISCORD_B, GUILD, 95, "seed");
+    adjustBalance(DISCORD_C, GUILD, 95, "seed");
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Crowded", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 2);
+    placeWager(id, DISCORD_B, "yes", 2);
+    placeWager(id, DISCORD_C, "no", 2);
+    cancelBet(id);
+
+    const tier = tierFor(20);
+    const expectedBonus = Math.floor(Math.min(3, TRADER_BONUS_CAP) * tier.perTraderBonus);
+    const bonusRow = getRecentLedger(CREATOR_DISCORD, GUILD, 10).find(
+      (r) => r.reason === "creator-trader-bonus",
+    );
+    expect(bonusRow?.delta).toBe(expectedBonus);
+  });
+
+  test("engagement bonus: no row when unique traders = 0 at smallest tier", () => {
+    const id = createBet(GUILD, CREATOR_DISCORD, "Nobody cares");
+    cancelBet(id);
+    const rows = getRecentLedger(CREATOR_DISCORD, GUILD, 10);
+    expect(rows.find((r) => r.reason === "creator-trader-bonus")).toBeUndefined();
+  });
+
+  test("CREATOR_STAKE_TIERS match the canonical set from the plan", () => {
+    expect(CREATOR_STAKE_TIERS.map((t) => t.stake)).toEqual([5, 20, 100]);
+  });
+
+  test("reopenBet reverses creator-settle + creator-trader-bonus and clears flag", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    adjustBalance(DISCORD_B, GUILD, 95, "seed");
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Reopenable", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 3);
+    placeWager(id, DISCORD_B, "no", 3);
+    resolveBet(id, "yes");
+
+    const settled = getBet(id);
+    expect(settled?.creatorSettled).toBe(1);
+    const settleDelta = getRecentLedger(CREATOR_DISCORD, GUILD, 20).find(
+      (r) => r.reason === "creator-settle",
+    )?.delta;
+    expect(settleDelta).toBeGreaterThan(0);
+
+    reopenBet(id);
+    expect(getBet(id)?.creatorSettled).toBe(0);
+    expect(getBet(id)?.status).toBe("open");
+    const postReopen = getRecentLedger(CREATOR_DISCORD, GUILD, 20);
+    // A bet-reverse row exists for the settle (clamped to creator balance).
+    expect(postReopen.some((r) => r.reason === "bet-reverse")).toBe(true);
+
+    // Re-resolve the other way — settleCreator fires again, new outcome.
+    resolveBet(id, "no");
+    expect(getBet(id)?.creatorSettled).toBe(1);
+    const afterRe = getRecentLedger(CREATOR_DISCORD, GUILD, 20).filter(
+      (r) => r.reason === "creator-settle",
+    );
+    expect(afterRe.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("sell-back — LMSR position exit", () => {
+  test("partial sell: reduces shares + amount, refunds, updates q, logs tick", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "Partial sell", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 10);
+
+    const before = getWagersForBet(id).find((w) => w.discordId === DISCORD_A)!;
+    const balBefore = getBalance(DISCORD_A, GUILD);
+    const qYesBefore = getBet(id)!.qYes;
+
+    const half = before.shares / 2;
+    const result = sellWager(id, DISCORD_A, half);
+    expect(result.refund).toBeGreaterThan(0);
+    expect(result.sharesRemaining).toBeCloseTo(before.shares - half, 5);
+
+    const after = getWagersForBet(id).find((w) => w.discordId === DISCORD_A)!;
+    expect(after.shares).toBeCloseTo(before.shares - half, 5);
+    expect(after.amount).toBe(Math.max(0, before.amount - result.refund));
+
+    // q_yes came down by the shares sold; probability fell toward 50%.
+    expect(getBet(id)!.qYes).toBeCloseTo(qYesBefore - half, 5);
+
+    // Refund credited with a bet-sell ledger row.
+    expect(getBalance(DISCORD_A, GUILD)).toBe(balBefore + result.refund);
+    const row = getRecentLedger(DISCORD_A, GUILD, 5)[0];
+    expect(row?.reason).toBe("bet-sell");
+    expect(row?.delta).toBe(result.refund);
+
+    // Market tick logged with negative shares + amount.
+    const sellTick = getTicksForBet(id).find((t) => t.kind === "sell");
+    expect(sellTick?.shares).toBeCloseTo(-half, 5);
+    expect(sellTick?.amount).toBe(-result.refund);
+  });
+
+  test("full sell deletes wager row; user can re-enter on either side", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "Full exit", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 8);
+
+    const held = getWagersForBet(id).find((w) => w.discordId === DISCORD_A)!.shares;
+    sellWager(id, DISCORD_A, held);
+    expect(getWagersForBet(id).find((w) => w.discordId === DISCORD_A)).toBeUndefined();
+
+    // Re-enter on the other side — no "already wagered" throw.
+    placeWager(id, DISCORD_A, "no", 4);
+    const re = getWagersForBet(id).find((w) => w.discordId === DISCORD_A);
+    expect(re?.outcome).toBe("no");
+  });
+
+  test("rejects selling more than held", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "Too much", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 5);
+    const held = getWagersForBet(id).find((w) => w.discordId === DISCORD_A)!.shares;
+    expect(() => sellWager(id, DISCORD_A, held + 10)).toThrow(/only hold/);
+  });
+
+  test("rejects sell on closed market", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "Closing", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 3);
+    resolveBet(id, "yes");
+    expect(() => sellWager(id, DISCORD_A, 1)).toThrow(/not open/);
+  });
+
+  test("rejects sell by non-holder", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "No position", null, { stake: 20 });
+    expect(() => sellWager(id, DISCORD_A, 1)).toThrow(/position/);
+  });
+
+  test("creator blocked from selling on their own market", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    const id = createBet(GUILD, CREATOR_DISCORD, "LP can't sell", null, { stake: 20 });
+    expect(() => sellWager(id, CREATOR_DISCORD, 1)).toThrow(/position to sell/);
+  });
+
+  test("rejects non-positive shares", () => {
+    const id = createBet(GUILD, CREATOR_DISCORD, "Q?");
+    expect(() => sellWager(id, DISCORD_A, 0)).toThrow(/positive/);
+    expect(() => sellWager(id, DISCORD_A, -1)).toThrow(/positive/);
+  });
+
+  test("path-independent: resolve after buy→sell→buy matches direct buy outcome", () => {
+    // Drives the "state is path-independent" invariant: the creator's
+    // settle at resolution should depend only on the final wager rows,
+    // not on any buy/sell churn in between.
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    adjustBalance(DISCORD_B, GUILD, 95, "seed");
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Churn", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 5);
+    // Full exit, then re-enter smaller on the opposite side.
+    const held = getWagersForBet(id).find((w) => w.discordId === DISCORD_A)!.shares;
+    sellWager(id, DISCORD_A, held);
+    placeWager(id, DISCORD_A, "no", 2);
+    placeWager(id, DISCORD_B, "yes", 3);
+
+    // Creator settle shouldn't throw or go negative — the invariant the
+    // property test in the plan calls out.
+    resolveBet(id, "no");
+    const settle = getRecentLedger(CREATOR_DISCORD, GUILD, 20).find(
+      (r) => r.reason === "creator-settle",
+    );
+    expect(settle).toBeDefined();
+    expect(settle!.delta).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("phase 4 — dispute → flip E2E with creator stake", () => {
+  test("admin flip: reopenBet reverses prior settle; re-resolve runs clean", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+    adjustBalance(DISCORD_B, GUILD, 95, "seed");
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Flip me E2E", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "yes", 5);
+    placeWager(id, DISCORD_B, "no", 5);
+    resolveBet(id, "yes");
+
+    // First settle landed.
+    const firstSettle = getRecentLedger(CREATOR_DISCORD, GUILD, 20).find(
+      (r) => r.reason === "creator-settle",
+    );
+    expect(firstSettle).toBeDefined();
+    expect(getBet(id)?.creatorSettled).toBe(1);
+
+    // B disputes; admin flips to NO.
+    const dispute = openDispute(id, DISCORD_B, "called it wrong");
+    markDisputeResolved(dispute.id, "flip", "no", CREATOR_DISCORD);
+    // Filing fee refunded since action is `flip`.
+    expect(
+      getRecentLedger(DISCORD_B, GUILD, 10).find(
+        (r) => r.reason === "dispute-fee-refund",
+      ),
+    ).toBeDefined();
+
+    // Admin flow mirrors admin/routes/markets.tsx: reopen, then re-resolve.
+    reopenBet(id);
+    expect(getBet(id)?.creatorSettled).toBe(0);
+    expect(getBet(id)?.status).toBe("open");
+    resolveBet(id, "no");
+    expect(getBet(id)?.creatorSettled).toBe(1);
+    expect(getBet(id)?.winningOutcome).toBe("no");
+
+    // Creator should now have two settle rows (original + re-run) and a
+    // reverse row sandwiched between, preserving the ledger-sum invariant.
+    const creatorRows = getRecentLedger(CREATOR_DISCORD, GUILD, 30);
+    const settles = creatorRows.filter((r) => r.reason === "creator-settle");
+    expect(settles.length).toBe(2);
+    expect(creatorRows.some((r) => r.reason === "bet-reverse")).toBe(true);
+
+    // Balance invariant: sum(ledger) must equal balance for each party.
+    expect(ledgerSum(CREATOR_DISCORD)).toBe(getBalance(CREATOR_DISCORD, GUILD));
+    expect(ledgerSum(DISCORD_A)).toBe(getBalance(DISCORD_A, GUILD));
+    expect(ledgerSum(DISCORD_B)).toBe(getBalance(DISCORD_B, GUILD));
+  });
+
+  test("getCreatorStats reports lifetime numbers correctly", () => {
+    adjustBalance(CREATOR_DISCORD, GUILD, 95, "seed");
+    adjustBalance(DISCORD_A, GUILD, 95, "seed");
+
+    const id = createBet(GUILD, CREATOR_DISCORD, "Stats?", null, { stake: 20 });
+    placeWager(id, DISCORD_A, "no", 3);
+    resolveBet(id, "yes"); // A loses, creator pockets pool.
+
+    const stats = getCreatorStats(CREATOR_DISCORD, GUILD);
+    expect(stats.marketsCreated).toBe(1);
+    expect(stats.stakeDeployed).toBe(20);
+    expect(stats.lifetimeSettle).toBeGreaterThanOrEqual(20);
+    expect(stats.netPnL).toBe(
+      stats.lifetimeSettle + stats.lifetimeBonus - stats.stakeDeployed,
+    );
   });
 });

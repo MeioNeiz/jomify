@@ -1,12 +1,20 @@
-export { adjustBalance, ensureAccount, getBalance } from "./accounts.js";
+export {
+  adjustBalance,
+  ensureAccount,
+  getBalance,
+  type TransferResult,
+  transferBalance,
+} from "./accounts.js";
 export {
   type Bet,
   type BetStatus,
   type CreateBetOptions,
+  type CreatorStats,
   cancelBet,
   createBet,
   extendBet,
   getBet,
+  getCreatorStats,
   getExpiredOpenBets,
   getOpenResolverBets,
   listOpenBets,
@@ -49,4 +57,10 @@ export {
 export { getAllTimeWins, getCurrentStandings } from "./leaderboard.js";
 export { getRecentLedger, type LedgerRow } from "./ledger.js";
 export { getTicksForBet, type Tick, type TickKind } from "./ticks.js";
-export { getWagersForBet, placeWager, type Wager } from "./wagers.js";
+export {
+  getWagersForBet,
+  placeWager,
+  type SellResult,
+  sellWager,
+  type Wager,
+} from "./wagers.js";
