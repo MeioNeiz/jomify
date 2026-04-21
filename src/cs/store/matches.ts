@@ -431,36 +431,6 @@ export function getPlayerMatchStats(steamId: string, limit = 20): MatchRow[] {
  * Returns null until a qualifying match is saved — drives the betting
  * resolver's "first match after market opened" decision.
  */
-/** First match after sinceIso where the player's Leetify rating >= threshold. */
-export function getMatchWithRatingAbove(
-  steamId: string,
-  sinceIso: string,
-  threshold: number,
-): MatchRow | null {
-  const row = sqlite
-    .query(
-      `SELECT
-         ms.match_id   AS matchId,
-         m.map_name    AS mapName,
-         m.finished_at AS finishedAt,
-         ms.raw        AS raw
-       FROM match_stats ms
-       JOIN matches m ON m.match_id = ms.match_id
-       WHERE ms.steam_id = ?
-         AND datetime(m.finished_at) > datetime(?)
-         AND CAST(json_extract(ms.raw, '$.leetify_rating') AS REAL) >= ?
-       ORDER BY m.finished_at ASC
-       LIMIT 1`,
-    )
-    .get(steamId, sinceIso, threshold) as {
-    matchId: string;
-    mapName: string;
-    finishedAt: string;
-    raw: string;
-  } | null;
-  return row ? toMatchRow(row) : null;
-}
-
 export function getFirstMatchAfter(steamId: string, sinceIso: string): MatchRow | null {
   const row = sqlite
     .query(

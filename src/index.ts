@@ -17,7 +17,6 @@ import { startFirstToListener } from "./betting/listeners/cs-first-to.js";
 // land before the watcher starts so the registry is populated when the
 // first tick fires.
 import "./betting/resolvers/cs-next-match.js";
-import "./betting/resolvers/cs-rating-goal.js";
 import "./betting/resolvers/cs-premier-milestone.js";
 import "./betting/resolvers/cs-win-streak.js";
 import "./betting/resolvers/cs-clutch-count.js";
