@@ -1,15 +1,19 @@
-// 1v1 coin-flip challenge store. Public embed + Accept / Decline with
-// stake held in escrow. All balance moves go through the ledger, same
-// contract as placeWager / resolveBet: no balance mutation without a
-// matching ledger row, and the per-flip net across all participants
-// is zero (stake moves challenger → winner; refund nets to zero).
+// Open 1v1 coin-flip challenge store. Public embed + Accept / Cancel
+// with stake held in escrow; anyone in the channel can accept. All
+// balance moves go through the ledger, same contract as placeWager /
+// resolveBet: no balance mutation without a matching ledger row, and
+// the per-flip net across all participants is zero (stake moves
+// challenger → winner; refund nets to zero).
 //
 // Status machine:
-//   open → accepted  (target clicked Accept, coin flipped, winner paid)
-//   open → declined  (target clicked Decline; stake refunded to challenger)
-//   open → expired   (lazy: Accept after expiry refunds instead; the
-//                     background watcher also sweeps these)
-import { and, eq, lte, or, sql } from "drizzle-orm";
+//   open → accepted  (someone accepts, coin flipped, winner paid;
+//                     target_id is stamped with the accepter's id)
+//   open → expired   (challenger cancels or deadline passes; stake
+//                     refunded to challenger. The background watcher
+//                     sweeps on a timer, and accept-after-expiry
+//                     refunds-and-expires inline.)
+//   (declined)       legacy status kept for historical rows only.
+import { and, eq, lte, ne, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import { accounts, flips, ledger } from "../schema.js";
 
@@ -20,7 +24,7 @@ export type Flip = {
   id: number;
   guildId: string;
   challengerId: string;
-  targetId: string;
+  targetId: string | null;
   amount: number;
   status: FlipStatus;
   winnerId: string | null;
@@ -35,6 +39,7 @@ export type AcceptResult =
   | { kind: "won"; winnerId: string; loserId: string; side: FlipSide; amount: number }
   | { kind: "expired" }
   | { kind: "gone" }
+  | { kind: "self" }
   | { kind: "insufficient-funds"; balance: number; needed: number };
 
 type FlipRow = typeof flips.$inferSelect;
@@ -66,20 +71,21 @@ function nowSqlIso(offsetMs: number): string {
 
 /**
  * Open a flip. Debits the challenger immediately and writes a
- * `flip-stake` ledger row in the same transaction. Throws on
- * insufficient balance — caller should pre-check for a friendlier
- * error message, this is belt-and-braces.
+ * `flip-stake` ledger row in the same transaction. channelId is
+ * stamped up front so the accept-by-/flip lookup can find it without
+ * waiting for the message pointer. Throws on insufficient balance —
+ * caller should pre-check for a friendlier error message, this is
+ * belt-and-braces.
  */
 export function openFlip(args: {
   guildId: string;
   challengerId: string;
-  targetId: string;
   amount: number;
   expiresInMs: number;
+  channelId?: string;
 }): number {
-  const { guildId, challengerId, targetId, amount, expiresInMs } = args;
+  const { guildId, challengerId, amount, expiresInMs, channelId } = args;
   if (amount <= 0) throw new Error("Amount must be positive");
-  if (challengerId === targetId) throw new Error("Can't flip yourself");
 
   return db.transaction((tx) => {
     const acct = tx
@@ -101,10 +107,11 @@ export function openFlip(args: {
       .values({
         guildId,
         challengerId,
-        targetId,
+        targetId: null,
         amount,
         status: "open",
         expiresAt: nowSqlIso(expiresInMs),
+        channelId: channelId ?? null,
       })
       .returning({ id: flips.id })
       .get();
@@ -129,12 +136,14 @@ export function getFlip(id: number): Flip | null {
 }
 
 /**
- * Current open flip in which `discordId` is either challenger or
- * target, scoped to this guild. Used to enforce the one-open-challenge
- * rule before opening a new one. Returns the newest open flip if
- * somehow more than one exists.
+ * Current open flip this user opened in the given guild. Used to
+ * enforce the one-open-challenge rule before opening a new one.
+ * Returns the newest if somehow more than one exists.
  */
-export function getOpenFlipForUser(discordId: string, guildId: string): Flip | null {
+export function getOpenFlipForChallenger(
+  discordId: string,
+  guildId: string,
+): Flip | null {
   const row = db
     .select()
     .from(flips)
@@ -142,7 +151,30 @@ export function getOpenFlipForUser(discordId: string, guildId: string): Flip | n
       and(
         eq(flips.guildId, guildId),
         eq(flips.status, "open"),
-        or(eq(flips.challengerId, discordId), eq(flips.targetId, discordId)),
+        eq(flips.challengerId, discordId),
+      ),
+    )
+    .orderBy(sql`${flips.id} DESC`)
+    .get();
+  return row ? toFlip(row) : null;
+}
+
+/**
+ * Latest open flip in `channelId` not opened by `excludingUserId`.
+ * Used by `/flip` (no amount) and the Accept button to pick a target.
+ */
+export function getLatestOpenFlipInChannel(
+  channelId: string,
+  excludingUserId: string,
+): Flip | null {
+  const row = db
+    .select()
+    .from(flips)
+    .where(
+      and(
+        eq(flips.channelId, channelId),
+        eq(flips.status, "open"),
+        ne(flips.challengerId, excludingUserId),
       ),
     )
     .orderBy(sql`${flips.id} DESC`)
@@ -173,7 +205,8 @@ export function getLastAcceptedFlipForUser(
 /**
  * Stamp the Discord message pointer on the flip. Called right after the
  * initial embed post so the expiry sweeper can edit the same message
- * when it reaps.
+ * when it reaps. channelId is already set at open time but we restamp
+ * here for safety (and to cover older callers that don't pass it).
  */
 export function setFlipMessage(
   flipId: number,
@@ -185,17 +218,23 @@ export function setFlipMessage(
 
 /**
  * Accept the flip. Rolls the coin inside the transaction using the
- * caller-supplied `side` (heads = challenger wins, tails = target
+ * caller-supplied `side` (heads = challenger wins, tails = accepter
  * wins), credits the winner the full 2x stake, writes `flip-win` on
- * the winner's ledger, and flips status to 'accepted'. Lazy-expires
- * if the deadline has passed: refunds the challenger and returns
- * { kind: "expired" }.
+ * the winner's ledger, stamps target_id with the accepter's id, and
+ * flips status to 'accepted'. Lazy-expires if the deadline has passed:
+ * refunds the challenger and returns { kind: "expired" }. Refuses to
+ * accept your own flip.
  */
-export function acceptFlip(flipId: number, side: FlipSide): AcceptResult {
+export function acceptFlip(
+  flipId: number,
+  acceptorId: string,
+  side: FlipSide,
+): AcceptResult {
   return db.transaction((tx) => {
     const row = tx.select().from(flips).where(eq(flips.id, flipId)).get();
     if (!row) return { kind: "gone" };
     if (row.status !== "open") return { kind: "gone" };
+    if (row.challengerId === acceptorId) return { kind: "self" };
 
     // Lazy expiry: treat as an expire-and-refund if the deadline has
     // passed. Keeps us correct even if the background watcher is down.
@@ -204,35 +243,35 @@ export function acceptFlip(flipId: number, side: FlipSide): AcceptResult {
       return { kind: "expired" };
     }
 
-    const winnerId = side === "heads" ? row.challengerId : row.targetId;
-    const loserId = side === "heads" ? row.targetId : row.challengerId;
+    const winnerId = side === "heads" ? row.challengerId : acceptorId;
+    const loserId = side === "heads" ? acceptorId : row.challengerId;
 
-    // The target wagered nothing up front — they need the funds now.
+    // The accepter wagered nothing up front — they need the funds now.
     // Short-circuit cleanly so the UI can show a friendly message and
     // the challenger's stake is refunded.
-    const targetAcct = tx
+    const acceptorAcct = tx
       .select({ balance: accounts.balance })
       .from(accounts)
-      .where(and(eq(accounts.discordId, row.targetId), eq(accounts.guildId, row.guildId)))
+      .where(and(eq(accounts.discordId, acceptorId), eq(accounts.guildId, row.guildId)))
       .get();
-    const targetBalance = targetAcct?.balance ?? 0;
-    if (targetBalance < row.amount) {
-      refundAndMark(tx, row, "declined");
+    const acceptorBalance = acceptorAcct?.balance ?? 0;
+    if (acceptorBalance < row.amount) {
+      refundAndMark(tx, row, "expired");
       return {
         kind: "insufficient-funds",
-        balance: targetBalance,
+        balance: acceptorBalance,
         needed: row.amount,
       };
     }
 
-    // Debit the loser's stake and credit the winner the full pot.
+    // Debit the accepter's stake and credit the winner the full pot.
     tx.update(accounts)
-      .set({ balance: targetBalance - row.amount })
-      .where(and(eq(accounts.discordId, row.targetId), eq(accounts.guildId, row.guildId)))
+      .set({ balance: acceptorBalance - row.amount })
+      .where(and(eq(accounts.discordId, acceptorId), eq(accounts.guildId, row.guildId)))
       .run();
     tx.insert(ledger)
       .values({
-        discordId: row.targetId,
+        discordId: acceptorId,
         guildId: row.guildId,
         delta: -row.amount,
         reason: "flip-stake",
@@ -246,9 +285,8 @@ export function acceptFlip(flipId: number, side: FlipSide): AcceptResult {
       .where(and(eq(accounts.discordId, winnerId), eq(accounts.guildId, row.guildId)))
       .get();
     const winnerBalance = winnerAcct?.balance ?? 0;
-    // The challenger's row already exists (stake debit created it).
-    // The target's row exists for the same reason if they were debited
-    // just above. Winner is one of the two — the row is always there.
+    // Challenger's row exists (stake debit created it); accepter's row
+    // was just created above. Winner is one of the two — always there.
     tx.update(accounts)
       .set({ balance: winnerBalance + row.amount * 2 })
       .where(and(eq(accounts.discordId, winnerId), eq(accounts.guildId, row.guildId)))
@@ -266,6 +304,7 @@ export function acceptFlip(flipId: number, side: FlipSide): AcceptResult {
     tx.update(flips)
       .set({
         status: "accepted",
+        targetId: acceptorId,
         winnerId,
         resolvedAt: sql`(datetime('now'))`,
       })
@@ -283,14 +322,14 @@ export function acceptFlip(flipId: number, side: FlipSide): AcceptResult {
 }
 
 /**
- * Decline the challenge. Refunds the challenger's stake and marks the
- * flip 'declined'. Idempotent: no-op on already-closed flips.
+ * Cancel an open flip. Only callable by the challenger (caller enforces).
+ * Refunds the stake and marks the flip 'expired'. Idempotent.
  */
-export function declineFlip(flipId: number): Flip | null {
+export function cancelFlip(flipId: number): Flip | null {
   return db.transaction((tx) => {
     const row = tx.select().from(flips).where(eq(flips.id, flipId)).get();
     if (!row || row.status !== "open") return row ? toFlip(row) : null;
-    refundAndMark(tx, row, "declined");
+    refundAndMark(tx, row, "expired");
     const after = tx.select().from(flips).where(eq(flips.id, flipId)).get();
     return after ? toFlip(after) : null;
   });

@@ -260,19 +260,23 @@ export const ledger = sqliteTable(
   ],
 );
 
-// 1v1 coin flip challenge. Public embed + Accept/Decline buttons. The
+// Open coin flip challenge. Challenger stakes up front; anyone else in
+// the channel can accept by clicking the button or running /flip. The
 // stake is debited from the challenger at open time (held in escrow)
-// and credited to the winner on accept, or refunded on decline /
-// expire. Status: 'open' | 'accepted' | 'declined' | 'expired'.
-// `winner_id` is only set when status = 'accepted'. Fair RNG:
-// heads = challenger wins, tails = target wins, 50/50 via crypto.randomInt.
+// and credited to the winner on accept, or refunded on cancel / expire.
+// `target_id` is null while open and stamped with the accepter's id
+// once status flips to 'accepted'. Status: 'open' | 'accepted'
+// | 'declined' | 'expired' ('declined' kept for historical rows — new
+// flips use 'expired' for cancellation). `winner_id` is only set when
+// status = 'accepted'. Fair RNG via crypto.randomInt: heads =
+// challenger wins, tails = accepter wins, 50/50.
 export const flips = sqliteTable(
   "flips",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     guildId: text("guild_id").notNull(),
     challengerId: text("challenger_id").notNull(),
-    targetId: text("target_id").notNull(),
+    targetId: text("target_id"),
     amount: integer("amount").notNull(),
     status: text("status").notNull(),
     winnerId: text("winner_id"),
@@ -287,5 +291,6 @@ export const flips = sqliteTable(
     index("idx_flips_challenger").on(t.challengerId, t.guildId, t.status),
     index("idx_flips_target").on(t.targetId, t.guildId, t.status),
     index("idx_flips_expires").on(t.expiresAt),
+    index("idx_flips_channel_status").on(t.channelId, t.status),
   ],
 );
