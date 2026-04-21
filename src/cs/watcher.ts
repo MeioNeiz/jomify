@@ -111,7 +111,10 @@ async function checkPlayer(client: Client, steamId: string) {
 
   if (currentPremier != null && prevPremier != null && currentPremier !== prevPremier) {
     const diff = currentPremier - prevPremier;
-    if (diff > 0) {
+    // Only alert on CS2 Premier colour-tier milestones (every 5k: 5k/10k/15k/...).
+    const crossedMilestone =
+      diff > 0 && Math.floor(currentPremier / 5000) > Math.floor(prevPremier / 5000);
+    if (crossedMilestone) {
       const embed = new EmbedBuilder()
         .setTitle("Rank Up!")
         .setColor(0x00ff00)
