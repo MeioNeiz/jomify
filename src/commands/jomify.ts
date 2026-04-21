@@ -20,7 +20,7 @@ const CATEGORIES: { title: string; commands: string[] }[] = [
   },
   {
     title: "Social",
-    commands: ["sus", "suspects", "inv", "float"],
+    commands: ["sus", "suspects", "inv", "float", "roll"],
   },
   {
     title: "Admin",

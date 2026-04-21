@@ -4,6 +4,8 @@ import db from "../db.js";
 import { accounts, bets, disputes, disputeVotes, ledger, wagers } from "../schema.js";
 import type { Outcome } from "./bets.js";
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 export type DisputeStatus = "open" | "resolved";
 export type DisputeAction = "keep" | "flip" | "cancel";
 export type Vote = "overturn" | "keep";
@@ -205,11 +207,11 @@ export function getDisputeVotes(disputeId: number): VoteTally {
 }
 
 /**
- * Mark a dispute resolved. Does NOT touch balances or the underlying
- * bet status — the caller is expected to apply the matching
- * adjustment (reopenBet + resolveBet/cancelBet) in the same logical
- * operation. Kept separate so each store function has a single
- * concern.
+ * Mark a dispute resolved. The opener's filing fee is refunded in the
+ * same transaction iff the action is `flip` or `cancel` — i.e. the
+ * dispute was upheld. On `keep` the fee is forfeit. The underlying
+ * bet adjustment (reopenBet + resolveBet/cancelBet) is applied by the
+ * caller, kept separate so each function has a single concern.
  */
 export function markDisputeResolved(
   disputeId: number,
@@ -217,14 +219,56 @@ export function markDisputeResolved(
   outcome: Outcome | null,
   resolverDiscordId: string,
 ): void {
-  db.update(disputes)
-    .set({
-      status: "resolved",
-      finalAction: action,
-      finalOutcome: outcome,
-      resolverDiscordId,
-      resolvedAt: sql`(datetime('now'))`,
+  db.transaction((tx) => {
+    const d = tx.select().from(disputes).where(eq(disputes.id, disputeId)).get();
+    if (!d) throw new Error(`Dispute #${disputeId} doesn't exist.`);
+    tx.update(disputes)
+      .set({
+        status: "resolved",
+        finalAction: action,
+        finalOutcome: outcome,
+        resolverDiscordId,
+        resolvedAt: sql`(datetime('now'))`,
+      })
+      .where(eq(disputes.id, disputeId))
+      .run();
+    if (action === "flip" || action === "cancel") {
+      refundDisputeFee(tx, d.betId, d.openerDiscordId, disputeId);
+    }
+  });
+}
+
+function refundDisputeFee(
+  tx: Tx,
+  betId: number,
+  openerDiscordId: string,
+  disputeId: number,
+): void {
+  const bet = tx
+    .select({ guildId: bets.guildId })
+    .from(bets)
+    .where(eq(bets.id, betId))
+    .get();
+  if (!bet) return;
+  const guildId = bet.guildId;
+  const acct = tx
+    .select({ balance: accounts.balance })
+    .from(accounts)
+    .where(and(eq(accounts.discordId, openerDiscordId), eq(accounts.guildId, guildId)))
+    .get();
+  // openDispute's debit always created the row; fall back to 0 defensively.
+  const current = acct?.balance ?? 0;
+  tx.update(accounts)
+    .set({ balance: current + DISPUTE_COST })
+    .where(and(eq(accounts.discordId, openerDiscordId), eq(accounts.guildId, guildId)))
+    .run();
+  tx.insert(ledger)
+    .values({
+      discordId: openerDiscordId,
+      guildId,
+      delta: DISPUTE_COST,
+      reason: "dispute-fee-refund",
+      ref: String(disputeId),
     })
-    .where(eq(disputes.id, disputeId))
     .run();
 }

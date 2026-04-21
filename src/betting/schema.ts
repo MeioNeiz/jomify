@@ -65,11 +65,20 @@ export const bets = sqliteTable(
     challengeAcceptBy: text("challenge_accept_by"),
     // LMSR market-maker state. b=0 means legacy pari-mutuel market.
     // initialProb is the creator's starting estimate; qYes/qNo are the
-    // running share counts updated on every wager.
+    // running share counts updated on every wager. b is real now that
+    // it's derived from the creator's stake (b = stake / ln 2).
     initialProb: real("initial_prob").notNull().default(0.5),
-    b: integer("b").notNull().default(0),
+    b: real("b").notNull().default(0),
     qYes: real("q_yes").notNull().default(0),
     qNo: real("q_no").notNull().default(0),
+    // Creator-as-LP escrow. Shekels debited from creator.balance at
+    // creation, trading P&L lands back via settleCreator at resolution
+    // / cancel. 0 on legacy rows → settleCreator no-ops, house-subsidy
+    // path stays intact.
+    creatorStake: integer("creator_stake").notNull().default(0),
+    // 0/1 idempotency flag — reopen clears it so re-resolve can replay
+    // the creator-settle + creator-trader-bonus rows cleanly.
+    creatorSettled: integer("creator_settled").notNull().default(0),
   },
   (t) => [
     index("idx_bets_guild_status").on(t.guildId, t.status),

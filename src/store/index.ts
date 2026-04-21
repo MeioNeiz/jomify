@@ -1,5 +1,6 @@
 export { type ApiCallRow, saveApiCall } from "./apiCalls.js";
 export {
+  clearNotifyChannel,
   getActivityPings,
   getAllGuildIds,
   getNotifyChannel,

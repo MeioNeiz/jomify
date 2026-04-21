@@ -5,8 +5,11 @@ import type {
   SlashCommandSubcommandsOnlyBuilder,
 } from "discord.js";
 import * as bet from "../betting/commands/bet.js";
+import * as creatorStats from "../betting/commands/creator-stats.js";
 import * as flip from "../betting/commands/flip.js";
+import * as give from "../betting/commands/give.js";
 import * as market from "../betting/commands/market.js";
+import * as roll from "../betting/commands/roll.js";
 import * as best from "../cs/commands/best.js";
 import * as carry from "../cs/commands/carry.js";
 import * as compare from "../cs/commands/compare.js";
@@ -64,4 +67,7 @@ export const commands: [string, Command][] = [
   ["market", market],
   ["bet", bet],
   ["flip", flip],
+  ["give", give],
+  ["roll", roll],
+  ["creator-stats", creatorStats],
 ];

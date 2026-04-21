@@ -92,6 +92,8 @@ for (const col of [
   "ALTER TABLE bets ADD COLUMN q_no REAL NOT NULL DEFAULT 0",
   "ALTER TABLE bets ADD COLUMN challenge_target_discord_id TEXT",
   "ALTER TABLE bets ADD COLUMN challenge_accept_by TEXT",
+  "ALTER TABLE bets ADD COLUMN creator_stake INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE bets ADD COLUMN creator_settled INTEGER NOT NULL DEFAULT 0",
 ]) {
   try {
     sqlite.run(col);

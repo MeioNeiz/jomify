@@ -62,6 +62,12 @@ interface SuspectEntry {
   encounterCount: number;
   withCount: number;
   vsCount: number;
+  /** Mean KD across the analysed matches. */
+  kd: number;
+  /** Mean ADR (damage per round) across the analysed matches. */
+  adr: number;
+  /** Highest-z flagged check, if any — inline "why flagged" hint. */
+  topFlag: { name: string; value: string; z: number } | null;
   /** Lifetime stats from Leetify's /v3/profile, populated in phase 2. */
   profile: {
     aim: number;
@@ -107,7 +113,7 @@ function buildEntry(
 ): SuspectEntry | null {
   const history = getPlayerMatchStats(steamId, ANALYSIS_HISTORY);
   if (history.length < MIN_MATCHES_FOR_ANALYSIS) return null;
-  const { score } = analyseStats(history.map((m) => m.raw));
+  const { score, checks, kd, adr } = analyseStats(history.map((m) => m.raw));
   let withCount = 0;
   let vsCount = 0;
   for (const e of encounters) {
@@ -115,6 +121,7 @@ function buildEntry(
     else vsCount++;
   }
   const adjustedScore = weightedScore(score, history.length);
+  const topFlagged = checks.filter((c) => c.flagged).sort((a, b) => b.z - a.z)[0];
   return {
     steamId,
     name: displayName,
@@ -125,6 +132,11 @@ function buildEntry(
     encounterCount: encounters.length,
     withCount,
     vsCount,
+    kd,
+    adr,
+    topFlag: topFlagged
+      ? { name: topFlagged.name, value: topFlagged.value, z: topFlagged.z }
+      : null,
     profile: null,
     refined: false,
   };
@@ -179,11 +191,23 @@ function renderLine(s: SuspectEntry): string {
   const main =
     `${v.icon} [${s.name}](${profileUrl}) **${s.score.toFixed(1)}**` +
     ` \u2014 ${s.encounterCount} games (${s.withCount} with, ${s.vsCount} vs)`;
-  if (!s.profile) return main;
+  // KD + ADR on every row (from analyseStats, always present). Helpful
+  // to judge "scary good" vs "lucky" even for non-flagged entries.
+  const statBits = [`KD ${s.kd.toFixed(2)}`, `ADR ${s.adr.toFixed(0)}`];
+  // Surface the loudest flagged check inline once the player crosses
+  // into the sussy band (score ≥ 5) — users see *why* at a glance.
+  if (s.score >= 5 && s.topFlag) {
+    statBits.push(`${s.topFlag.name.toLowerCase()}: ${s.topFlag.value}`);
+  }
+  const statsLine = `-# ${statBits.join(" \u00B7 ")}`;
+  if (!s.profile) return `${main}\n${statsLine}`;
   const aim = s.profile.aim.toFixed(1);
   const hs = `${s.profile.hs.toFixed(1)}%`;
   const preaim = `${s.profile.preaim.toFixed(1)}cm`;
-  return `${main}\n-# Leetify lifetime: aim ${aim} \u00B7 HS ${hs} \u00B7 preaim ${preaim}`;
+  return (
+    `${main}\n${statsLine}\n` +
+    `-# Leetify lifetime: aim ${aim} \u00B7 HS ${hs} \u00B7 preaim ${preaim}`
+  );
 }
 
 function buildDetailSelect(entries: SuspectEntry[]) {

@@ -1,4 +1,5 @@
 import {
+  ChannelType,
   Client,
   Collection,
   Events,
@@ -97,6 +98,35 @@ Bun.serve({
   hostname: "127.0.0.1",
   async fetch(req) {
     const url = new URL(req.url);
+    if (req.method === "GET" && url.pathname === "/channels") {
+      const guildId = url.searchParams.get("guildId");
+      if (!guildId) return new Response("Missing guildId", { status: 400 });
+      try {
+        const guild = await client.guilds.fetch(guildId);
+        const channels = await guild.channels.fetch();
+        const textLike = [...channels.values()]
+          .filter(
+            (ch): ch is NonNullable<typeof ch> =>
+              ch != null &&
+              (ch.type === ChannelType.GuildText ||
+                ch.type === ChannelType.GuildAnnouncement),
+          )
+          .map((ch) => ({
+            id: ch.id,
+            name: ch.name,
+            parentName: ch.parent?.name ?? null,
+            position: ch.position,
+          }))
+          .sort((a, b) => a.position - b.position);
+        return Response.json({ channels: textLike });
+      } catch (err) {
+        log.warn({ guildId, err }, "IPC /channels failed");
+        return Response.json(
+          { error: (err as Error).message, channels: [] },
+          { status: 502 },
+        );
+      }
+    }
     if (req.method !== "POST" || url.pathname !== "/refresh") {
       return new Response("Not Found", { status: 404 });
     }

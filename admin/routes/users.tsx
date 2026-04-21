@@ -3,6 +3,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { accounts, bets, disputes, ledger, wagers } from "../../src/betting/schema.js";
 import { adjustBalance } from "../../src/betting/store/accounts.js";
+import { getCreatorStats } from "../../src/betting/store/bets.js";
 import { db, logAdminAction } from "../db.js";
 import type { Env } from "../middleware.js";
 import {
@@ -64,6 +65,21 @@ router.get("/", async (c) => {
       return m;
     }, {});
 
+  // Creator-LP net P&L per (guild, user) — one aggregate per row in the
+  // page. Running this as a subquery-free JS map keeps the query flat;
+  // page size is small enough that it won't hurt.
+  const lpStats = rows.reduce<Record<string, { net: number; markets: number }>>(
+    (acc, r) => {
+      const s = getCreatorStats(r.discordId, r.guildId);
+      acc[`${r.guildId}:${r.discordId}`] = {
+        net: s.netPnL,
+        markets: s.marketsCreated,
+      };
+      return acc;
+    },
+    {},
+  );
+
   return c.html(
     page(
       "Users",
@@ -73,36 +89,58 @@ router.get("/", async (c) => {
         <H1>Users</H1>
         <Card>
           <Table
-            headers={["Discord ID", "Guild ID", "Balance", "Wagers", "Disputes", ""]}
+            headers={[
+              "Discord ID",
+              "Guild ID",
+              "Balance",
+              "Wagers",
+              "LP markets",
+              "LP P&L",
+              "Disputes",
+              "",
+            ]}
           >
-            {rows.map((a) => (
-              <Tr>
-                <Td>
-                  <a
-                    href={`/users/${a.guildId}/${a.discordId}`}
-                    class="font-mono text-xs text-pink-400 hover:text-pink-300"
-                  >
-                    {a.discordId}
-                  </a>
-                </Td>
-                <Td>
-                  <span class="font-mono text-xs text-gray-400">{a.guildId}</span>
-                </Td>
-                <Td>
-                  <span class="font-bold">{a.balance}</span>
-                </Td>
-                <Td>{wagerCounts[a.discordId] ?? 0}</Td>
-                <Td>{disputesCounts[a.discordId] ?? 0}</Td>
-                <Td>
-                  <a
-                    href={`/users/${a.guildId}/${a.discordId}`}
-                    class="text-xs text-gray-400 hover:text-white"
-                  >
-                    Detail →
-                  </a>
-                </Td>
-              </Tr>
-            ))}
+            {rows.map((a) => {
+              const lp = lpStats[`${a.guildId}:${a.discordId}`];
+              const pnl = lp?.net ?? 0;
+              const pnlClass =
+                pnl > 0 ? "text-green-400" : pnl < 0 ? "text-red-400" : "text-gray-500";
+              return (
+                <Tr>
+                  <Td>
+                    <a
+                      href={`/users/${a.guildId}/${a.discordId}`}
+                      class="font-mono text-xs text-pink-400 hover:text-pink-300"
+                    >
+                      {a.discordId}
+                    </a>
+                  </Td>
+                  <Td>
+                    <span class="font-mono text-xs text-gray-400">{a.guildId}</span>
+                  </Td>
+                  <Td>
+                    <span class="font-bold">{a.balance}</span>
+                  </Td>
+                  <Td>{wagerCounts[a.discordId] ?? 0}</Td>
+                  <Td>{lp?.markets ?? 0}</Td>
+                  <Td>
+                    <span class={pnlClass}>
+                      {pnl > 0 ? "+" : ""}
+                      {pnl}
+                    </span>
+                  </Td>
+                  <Td>{disputesCounts[a.discordId] ?? 0}</Td>
+                  <Td>
+                    <a
+                      href={`/users/${a.guildId}/${a.discordId}`}
+                      class="text-xs text-gray-400 hover:text-white"
+                    >
+                      Detail →
+                    </a>
+                  </Td>
+                </Tr>
+              );
+            })}
           </Table>
           <Pagination page={page_} total={total} pageSize={PAGE_SIZE} url="/users" />
         </Card>

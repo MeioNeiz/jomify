@@ -8,6 +8,11 @@
 
 import type { Outcome } from "./store/bets.js";
 
+/** LMSR cost function C(qYes, qNo) = b × ln(e^(qYes/b) + e^(qNo/b)). */
+function lmsrCost(qYes: number, qNo: number, b: number): number {
+  return b * Math.log(Math.exp(qYes / b) + Math.exp(qNo / b));
+}
+
 /** Current implied YES probability given the running share counts. */
 export function lmsrProb(qYes: number, qNo: number, b: number): number {
   const ey = Math.exp(qYes / b);
@@ -50,6 +55,27 @@ export function lmsrInitShares(
 ): { qYes: number; qNo: number } {
   const logOdds = b * Math.log(initialProb / (1 - initialProb));
   return { qYes: Math.max(0, logOdds), qNo: Math.max(0, -logOdds) };
+}
+
+/**
+ * Refund (shekels, integer-floored) for selling `sharesToSell` shares of
+ * `outcome` back to the market. Inverse of a buy: returns the cost
+ * delta `C(q) − C(q − Δ)` with the same rake applied as on payouts.
+ * The caller must ensure `sharesToSell <= held` so the subtraction
+ * doesn't cross zero.
+ */
+export function lmsrSellRefund(
+  qYes: number,
+  qNo: number,
+  b: number,
+  sharesToSell: number,
+  outcome: Outcome,
+  rake: number,
+): number {
+  const qYesAfter = outcome === "yes" ? qYes - sharesToSell : qYes;
+  const qNoAfter = outcome === "no" ? qNo - sharesToSell : qNo;
+  const gross = lmsrCost(qYes, qNo, b) - lmsrCost(qYesAfter, qNoAfter, b);
+  return Math.floor(gross * (1 - rake));
 }
 
 /** Expected payout (shekels) if `outcome` resolves, given `amount` staked now. */

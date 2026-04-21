@@ -3,6 +3,10 @@ import { STARTING_BALANCE } from "../config.js";
 import db from "../db.js";
 import { accounts, ledger } from "../schema.js";
 
+export type TransferResult =
+  | { kind: "ok"; senderBalance: number; recipientBalance: number }
+  | { kind: "insufficient-funds"; balance: number; needed: number };
+
 export function getBalance(discordId: string, guildId: string): number {
   const row = db
     .select({ balance: accounts.balance })
@@ -94,5 +98,79 @@ export function adjustBalance(
       .values({ discordId, guildId, delta: effectiveDelta, reason, ref })
       .run();
     return next;
+  });
+}
+
+/**
+ * Move `amount` from `senderId` to `recipientId` in one transaction with
+ * two ledger rows (`give-sent` / `give-received`). Both accounts are
+ * lazy-initialised if missing, same as adjustBalance. Returns the new
+ * balances on success, or an insufficient-funds result with no writes.
+ */
+export function transferBalance(
+  senderId: string,
+  recipientId: string,
+  guildId: string,
+  amount: number,
+  ref: string | null = null,
+): TransferResult {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  if (senderId === recipientId) throw new Error("Can't transfer to yourself");
+  return db.transaction((tx) => {
+    const ensure = (discordId: string): number => {
+      const existing = tx
+        .select({ balance: accounts.balance })
+        .from(accounts)
+        .where(and(eq(accounts.discordId, discordId), eq(accounts.guildId, guildId)))
+        .get();
+      if (existing) return existing.balance;
+      tx.insert(accounts).values({ discordId, guildId, balance: STARTING_BALANCE }).run();
+      tx.insert(ledger)
+        .values({
+          discordId,
+          guildId,
+          delta: STARTING_BALANCE,
+          reason: "starting-grant",
+          ref: null,
+        })
+        .run();
+      return STARTING_BALANCE;
+    };
+    const senderBal = ensure(senderId);
+    if (senderBal < amount) {
+      return { kind: "insufficient-funds", balance: senderBal, needed: amount };
+    }
+    const recipientBal = ensure(recipientId);
+    tx.update(accounts)
+      .set({ balance: senderBal - amount })
+      .where(and(eq(accounts.discordId, senderId), eq(accounts.guildId, guildId)))
+      .run();
+    tx.update(accounts)
+      .set({ balance: recipientBal + amount })
+      .where(and(eq(accounts.discordId, recipientId), eq(accounts.guildId, guildId)))
+      .run();
+    tx.insert(ledger)
+      .values({
+        discordId: senderId,
+        guildId,
+        delta: -amount,
+        reason: "give-sent",
+        ref,
+      })
+      .run();
+    tx.insert(ledger)
+      .values({
+        discordId: recipientId,
+        guildId,
+        delta: amount,
+        reason: "give-received",
+        ref,
+      })
+      .run();
+    return {
+      kind: "ok",
+      senderBalance: senderBal - amount,
+      recipientBalance: recipientBal + amount,
+    };
   });
 }

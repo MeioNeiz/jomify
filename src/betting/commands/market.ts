@@ -24,8 +24,17 @@ import { fetchGammaMarket } from "../resolvers/polymarket.js";
 // here (not commands/index.ts) so the market module owns the
 // surfaces that share its lifecycle.
 import "../disputes.js";
-import { DEFAULT_EXPIRY_HOURS, DISPUTE_COST, LMSR_RAKE } from "../config.js";
-import { lmsrExpectedPayout, lmsrProb } from "../lmsr.js";
+import {
+  CHALLENGE_MIN_STAKE,
+  CREATOR_STAKE_TIERS,
+  DEFAULT_CREATOR_STAKE,
+  DEFAULT_EXPIRY_HOURS,
+  DISPUTE_COST,
+  LMSR_RAKE,
+  TRADER_BONUS_CAP,
+  tierFor,
+} from "../config.js";
+import { lmsrExpectedPayout, lmsrProb, lmsrSellRefund } from "../lmsr.js";
 import { lookup } from "../resolvers/index.js";
 import {
   cancelBet,
@@ -39,6 +48,7 @@ import {
   type Outcome,
   placeWager,
   resolveBet,
+  sellWager,
   setBetMessage,
 } from "../store.js";
 import {
@@ -87,6 +97,17 @@ export const data = new SlashCommandBuilder()
             `Auto-close + refund after this long (default: ${DEFAULT_EXPIRY_HOURS}h)`,
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss, deeper markets need bigger stakes (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
         return opt;
       }),
   )
@@ -139,6 +160,17 @@ export const data = new SlashCommandBuilder()
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
+        return opt;
       }),
   )
   .addSubcommand((sub) =>
@@ -182,6 +214,17 @@ export const data = new SlashCommandBuilder()
             `Deadline — resolves NO if rating not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
         return opt;
       }),
   )
@@ -228,6 +271,17 @@ export const data = new SlashCommandBuilder()
             `Deadline — resolves NO if rating not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
         return opt;
       }),
   )
@@ -297,6 +351,17 @@ export const data = new SlashCommandBuilder()
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
+        return opt;
       }),
   )
   .addSubcommand((sub) =>
@@ -355,6 +420,17 @@ export const data = new SlashCommandBuilder()
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
+        return opt;
       }),
   )
   .addSubcommand((sub) =>
@@ -410,6 +486,17 @@ export const data = new SlashCommandBuilder()
             `Deadline — resolves NO if not hit in time (default: ${DEFAULT_EXPIRY_HOURS}h)`,
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
+        return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — max loss on this market (default: ${DEFAULT_CREATOR_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
         return opt;
       }),
   )
@@ -488,6 +575,18 @@ export const data = new SlashCommandBuilder()
           );
         for (const d of MARKET_DURATIONS) opt.addChoices({ name: d.name, value: d.name });
         return opt;
+      })
+      .addIntegerOption((opt) => {
+        opt
+          .setName("stake")
+          .setDescription(
+            `Your LP stake — challenges stake at least ${CHALLENGE_MIN_STAKE} (default: ${CHALLENGE_MIN_STAKE})`,
+          );
+        for (const t of CREATOR_STAKE_TIERS) {
+          if (t.stake < CHALLENGE_MIN_STAKE) continue;
+          opt.addChoices({ name: `${t.stake} shekels`, value: t.stake });
+        }
+        return opt;
       }),
   )
   .addSubcommand((sub) =>
@@ -562,7 +661,22 @@ export function renderMarketView(
     );
   }
 
-  descLines.push(`${MARKET_COPY.creatorPrefix} <@${bet.creatorDiscordId}>`);
+  descLines.push(
+    `${MARKET_COPY.creatorPrefix} <@${bet.creatorDiscordId}>` +
+      (bet.creatorStake > 0 ? ` · staked **${bet.creatorStake}** as LP` : ""),
+  );
+
+  if (bet.status === "open" && bet.creatorStake > 0) {
+    const uniqueTraders = new Set(allWagers.map((w) => w.discordId)).size;
+    const { perTraderBonus } = tierFor(bet.creatorStake);
+    const lockedBonus = Math.floor(
+      Math.min(uniqueTraders, TRADER_BONUS_CAP) * perTraderBonus,
+    );
+    descLines.push(
+      `📒 LP: **${uniqueTraders}** trader${uniqueTraders === 1 ? "" : "s"}` +
+        ` · bonus at resolution: **${lockedBonus}**`,
+    );
+  }
 
   if (bet.challengeTargetDiscordId) {
     const acceptByUnix = bet.challengeAcceptBy
@@ -648,6 +762,7 @@ export function renderMarketView(
   const betRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     button(`market:wager:${bet.id}:yes`, MARKET_BUTTONS.betYes),
     button(`market:wager:${bet.id}:no`, MARKET_BUTTONS.betNo),
+    button(`market:sell:${bet.id}`, MARKET_BUTTONS.sell),
   );
   const extendBtn = button(`market:extend:${bet.id}`, MARKET_BUTTONS.extend);
   if (bet.resolverKind) {
@@ -679,10 +794,18 @@ async function handleCreate(interaction: ChatInputCommandInteraction, guildId: s
   const probPct = interaction.options.getInteger("probability") ?? 50;
   const durationChoice = interaction.options.getString("duration");
   const expiresAt = expiryIso(durationHours(durationChoice));
+  const stake = interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE;
 
-  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
-    initialProb: probPct / 100,
-  });
+  let id: number;
+  try {
+    id = createBet(guildId, interaction.user.id, question, expiresAt, {
+      initialProb: probPct / 100,
+      stake,
+    });
+  } catch (err) {
+    await interaction.editReply((err as Error).message);
+    return;
+  }
   await interaction.editReply(renderMarketView(id));
 
   try {
@@ -718,6 +841,7 @@ async function handleCsRatingGoal(
     resolverKind: "cs:rating-goal",
     resolverArgs: { steamId: resolved.steamId, threshold },
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -781,6 +905,7 @@ async function handleCsNextMatch(
       ...(threshold !== null ? { threshold } : {}),
     },
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -832,6 +957,7 @@ async function handleMirror(interaction: ChatInputCommandInteraction, guildId: s
     resolverKind,
     resolverArgs,
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -880,6 +1006,7 @@ async function handleStock(interaction: ChatInputCommandInteraction, guildId: st
     resolverKind,
     resolverArgs,
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -928,6 +1055,7 @@ async function handleCrypto(interaction: ChatInputCommandInteraction, guildId: s
     resolverKind,
     resolverArgs,
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -953,17 +1081,32 @@ async function handleChallenge(
   const durationChoice = interaction.options.getString("duration");
   const expiresAt = expiryIso(durationHours(durationChoice));
 
-  const balance = getBalance(interaction.user.id, guildId);
-  if (amount > balance) {
+  const pickedStake = interaction.options.getInteger("stake") ?? CHALLENGE_MIN_STAKE;
+  if (pickedStake < CHALLENGE_MIN_STAKE) {
     await interaction.editReply(
-      `You only have **${balance}** shekels — not enough to stake **${amount}**.`,
+      `Challenge markets need at least ${CHALLENGE_MIN_STAKE} shekels of LP stake.`,
+    );
+    return;
+  }
+  const balance = getBalance(interaction.user.id, guildId);
+  const needed = pickedStake + amount;
+  if (balance < needed) {
+    await interaction.editReply(
+      `You only have **${balance}** shekels — need **${needed}** (${pickedStake} LP + ${amount} stake).`,
     );
     return;
   }
 
-  const id = createBet(guildId, interaction.user.id, question, expiresAt, {
-    challengeTargetDiscordId: targetUser.id,
-  });
+  let id: number;
+  try {
+    id = createBet(guildId, interaction.user.id, question, expiresAt, {
+      challengeTargetDiscordId: targetUser.id,
+      stake: pickedStake,
+    });
+  } catch (err) {
+    await interaction.editReply((err as Error).message);
+    return;
+  }
   try {
     placeWager(id, interaction.user.id, mySide, amount);
   } catch (err) {
@@ -1016,6 +1159,7 @@ async function handleCsPremier(
     resolverKind: "cs:premier-milestone",
     resolverArgs: { steamId: resolved.steamId, target },
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -1164,6 +1308,7 @@ async function handleFirstTo(interaction: ChatInputCommandInteraction, guildId: 
       ...(stat === "win-streak" && threshold !== null ? { threshold } : {}),
     },
     initialProb: probPct / 100,
+    stake: interaction.options.getInteger("stake") ?? DEFAULT_CREATOR_STAKE,
   });
   await interaction.editReply(renderMarketView(id));
   try {
@@ -1442,6 +1587,95 @@ registerComponent("market", async (interaction) => {
       return;
     }
     await interaction.update(renderMarketView(betId));
+    return;
+  }
+
+  if (action === "sell" && interaction.isButton()) {
+    const betId = Number(parts[2]);
+    const bet = getBet(betId);
+    if (!bet || bet.status !== "open") {
+      await interaction.reply({
+        content: "This market is closed.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (bet.creatorDiscordId === interaction.user.id && bet.creatorStake > 0) {
+      await interaction.reply({
+        content: "You're the LP — your stake settles at resolution, no position to sell.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const wager = getWagersForBet(betId).find((w) => w.discordId === interaction.user.id);
+    if (!wager) {
+      await interaction.reply({
+        content: "You don't have a position on this market yet.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const heldStr = wager.shares.toFixed(3);
+    const fullRefund = lmsrSellRefund(
+      bet.qYes,
+      bet.qNo,
+      bet.b,
+      wager.shares,
+      wager.outcome,
+      LMSR_RAKE,
+    );
+    const modal = new ModalBuilder()
+      .setCustomId(`market:sellmodal:${betId}`)
+      .setTitle(`Sell ${wager.outcome.toUpperCase()} #${betId}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("shares")
+            .setLabel(`Shares (you hold ${heldStr} ≈ ${fullRefund} back)`)
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue(heldStr)
+            .setMinLength(1)
+            .setMaxLength(12),
+        ),
+      );
+    await interaction.showModal(modal);
+    return;
+  }
+
+  if (action === "sellmodal" && interaction.isModalSubmit()) {
+    const betId = Number(parts[2]);
+    const raw = interaction.fields.getTextInputValue("shares").trim();
+    const shares = Number(raw);
+    if (!Number.isFinite(shares) || shares <= 0) {
+      await interaction.reply({
+        content: `\`${raw}\` isn't a positive number.`,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    let result: { refund: number; sharesRemaining: number };
+    try {
+      result = sellWager(betId, interaction.user.id, shares);
+    } catch (err) {
+      await interaction.reply({
+        content: (err as Error).message,
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (interaction.isFromMessage()) {
+      await interaction.update(renderMarketView(betId));
+    }
+    const balance = getBalance(interaction.user.id, interaction.guildId!);
+    const tail =
+      result.sharesRemaining > 0
+        ? `Remaining position: **${result.sharesRemaining.toFixed(3)}** shares.`
+        : "Fully exited.";
+    await interaction.followUp({
+      content: `Sold for **${result.refund}** shekels. ${tail} Balance: **${balance}**.`,
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 

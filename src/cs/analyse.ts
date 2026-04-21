@@ -47,6 +47,10 @@ export interface Check {
 export interface AnalysisResult {
   checks: Check[];
   score: number;
+  /** Mean KD across the analysed matches. */
+  kd: number;
+  /** Mean damage-per-round (ADR) across the analysed matches. */
+  adr: number;
 }
 
 export const SUSPECT_THRESHOLD = 8;
@@ -179,7 +183,7 @@ export function analyseStats(stats: LeetifyPlayerStats[]): AnalysisResult {
     });
   }
 
-  return { checks, score: totalScore };
+  return { checks, score: totalScore, kd: kdAvg, adr: dprAvg };
 }
 
 /** Quick single-match analysis from raw stats. */

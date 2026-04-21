@@ -35,6 +35,9 @@ const Layout: FC<Props> = ({ title, username, csrf, flash, children }) => (
         <a href="/ledger" class="text-gray-300 hover:text-white">
           Ledger
         </a>
+        <a href="/settings" class="text-gray-300 hover:text-white">
+          Settings
+        </a>
         <div class="ml-auto flex items-center gap-4">
           <span class="text-gray-400">{username}</span>
           <a href="/logout" class="text-gray-500 hover:text-white">

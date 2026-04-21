@@ -13,7 +13,8 @@ export type AdminActionKind =
   | "market-cancel"
   | "market-create"
   | "market-reopen-cancel"
-  | "market-reopen-flip";
+  | "market-reopen-flip"
+  | "guild-config-set";
 
 export function logAdminAction(
   adminId: string,

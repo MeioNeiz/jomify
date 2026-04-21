@@ -12,6 +12,16 @@ export function setNotifyChannel(guildId: string, channelId: string): void {
     .run();
 }
 
+export function clearNotifyChannel(guildId: string): void {
+  db.insert(guildConfig)
+    .values({ guildId, notifyChannelId: null })
+    .onConflictDoUpdate({
+      target: guildConfig.guildId,
+      set: { notifyChannelId: null },
+    })
+    .run();
+}
+
 export function getNotifyChannel(guildId: string): string | null {
   const row = db
     .select({ notifyChannelId: guildConfig.notifyChannelId })
