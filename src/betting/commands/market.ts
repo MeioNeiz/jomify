@@ -52,7 +52,6 @@ import {
   setBetMessage,
 } from "../store.js";
 import {
-  CURRENCY,
   MARKET_BUTTONS,
   MARKET_COPY,
   MARKET_DURATIONS,
@@ -623,6 +622,24 @@ export function renderMarketView(
   if (bet.status === "open" && bet.expiresAt) {
     const unix = Math.floor(new Date(`${bet.expiresAt}Z`).getTime() / 1000);
     descLines.push(`Closes <t:${unix}:R>`);
+  }
+
+  if (bet.status === "open" && bet.b > 0) {
+    const stakes = [10, 50, 100];
+    const yesLadder = stakes
+      .map(
+        (s) =>
+          `${s}→${lmsrExpectedPayout(bet.qYes, bet.qNo, bet.b, s, "yes", LMSR_RAKE)}`,
+      )
+      .join(" · ");
+    const noLadder = stakes
+      .map(
+        (s) => `${s}→${lmsrExpectedPayout(bet.qYes, bet.qNo, bet.b, s, "no", LMSR_RAKE)}`,
+      )
+      .join(" · ");
+    descLines.push(
+      `💰 Payout ladder — ${MARKET_EMOJI.yes} ${yesLadder}  |  ${MARKET_EMOJI.no} ${noLadder}`,
+    );
   }
 
   const openDispute = bet.status === "resolved" ? getOpenDisputeForBet(bet.id) : null;
@@ -1271,6 +1288,33 @@ registerComponent("market", async (interaction) => {
     // stepping into before they commit an amount.
     const oddsStr =
       bet.b > 0 ? ` — ${Math.round(lmsrProb(bet.qYes, bet.qNo, bet.b) * 100)}% YES` : "";
+    // Single-bet multiplier preview so a one-shot player sees what their
+    // shekel is worth without having to submit first. Uses a 10-shekel
+    // probe so tiny markets don't over-skew the quote.
+    let multiplierHint = "";
+    if (bet.b > 0) {
+      const probeStake = 10;
+      const probePayout = lmsrExpectedPayout(
+        bet.qYes,
+        bet.qNo,
+        bet.b,
+        probeStake,
+        outcome,
+        LMSR_RAKE,
+      );
+      if (probePayout > 0) {
+        const multiple = probePayout / probeStake;
+        const pctCurrent = Math.round(
+          (outcome === "yes"
+            ? lmsrProb(bet.qYes, bet.qNo, bet.b)
+            : 1 - lmsrProb(bet.qYes, bet.qNo, bet.b)) * 100,
+        );
+        multiplierHint = ` — ~${multiple.toFixed(1)}× ${outcome.toUpperCase()} at ${pctCurrent}%`;
+      }
+    }
+    const fullLabel = `Stake (you have ${balance})${multiplierHint}`;
+    // Discord caps TextInput labels at 45 chars; drop the hint if we'd blow past.
+    const label = fullLabel.length <= 45 ? fullLabel : `Stake (you have ${balance})`;
     const modal = new ModalBuilder()
       .setCustomId(`market:modal:${betId}:${outcome}`)
       .setTitle(`Bet ${outcome.toUpperCase()}${oddsStr} #${betId}`)
@@ -1278,7 +1322,7 @@ registerComponent("market", async (interaction) => {
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
             .setCustomId("amount")
-            .setLabel(`${CURRENCY.label} to stake (you have ${balance})`)
+            .setLabel(label)
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setPlaceholder("e.g. 10")
@@ -1316,6 +1360,10 @@ registerComponent("market", async (interaction) => {
             LMSR_RAKE,
           )
         : null;
+    const probBefore =
+      betBefore?.b && betBefore.b > 0
+        ? lmsrProb(betBefore.qYes, betBefore.qNo, betBefore.b)
+        : null;
 
     // Check before placing: is this the first wager of this outcome?
     const isFirstOfOutcome =
@@ -1337,12 +1385,28 @@ registerComponent("market", async (interaction) => {
       await interaction.update(renderMarketView(betId));
     }
 
+    // Slippage warning: if this wager shifted the implied prob by >=10 pts,
+    // tack a note on so the bettor knows they moved the market.
+    const betAfter = getBet(betId);
+    let slippageStr = "";
+    if (probBefore !== null && betAfter?.b && betAfter.b > 0) {
+      const probAfter = lmsrProb(betAfter.qYes, betAfter.qNo, betAfter.b);
+      const pctShift = Math.abs(probAfter - probBefore) * 100;
+      if (pctShift >= 10) {
+        const pctBefore = Math.round(probBefore * 100);
+        const pctAfter = Math.round(probAfter * 100);
+        slippageStr =
+          `\n⚠️ Moved YES **${pctBefore}% → ${pctAfter}%** — ` +
+          `you're a price-mover on this one.`;
+      }
+    }
+
     const payoutStr =
       expectedPayout !== null
         ? ` → **~${expectedPayout}** shekels if ${outcome.toUpperCase()} resolves`
         : "";
     await interaction.followUp({
-      content: `Staked **${amount}** on **${outcome}**${payoutStr}. Balance: **${balance}**.`,
+      content: `Staked **${amount}** on **${outcome}**${payoutStr}. Balance: **${balance}**.${slippageStr}`,
       flags: MessageFlags.Ephemeral,
     });
 
@@ -1387,6 +1451,24 @@ registerComponent("market", async (interaction) => {
       return;
     }
     const balance = getBalance(interaction.user.id, interaction.guildId!);
+    let multiplierHint = "";
+    if (bet.b > 0) {
+      const probePayout = lmsrExpectedPayout(
+        bet.qYes,
+        bet.qNo,
+        bet.b,
+        10,
+        oppSide,
+        LMSR_RAKE,
+      );
+      if (probePayout > 0) {
+        const probYes = lmsrProb(bet.qYes, bet.qNo, bet.b);
+        const pct = Math.round((oppSide === "yes" ? probYes : 1 - probYes) * 100);
+        multiplierHint = ` — ~${(probePayout / 10).toFixed(1)}× ${oppSide.toUpperCase()} at ${pct}%`;
+      }
+    }
+    const fullLabel = `Stake (you have ${balance})${multiplierHint}`;
+    const label = fullLabel.length <= 45 ? fullLabel : `Stake (you have ${balance})`;
     const modal = new ModalBuilder()
       .setCustomId(`market:modal:${betId}:${oppSide}`)
       .setTitle(`Counter ${oppSide.toUpperCase()} #${betId}`)
@@ -1394,7 +1476,7 @@ registerComponent("market", async (interaction) => {
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
             .setCustomId("amount")
-            .setLabel(`${CURRENCY.label} to stake (you have ${balance})`)
+            .setLabel(label)
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setValue(Number.isFinite(firstAmount) ? String(firstAmount) : "")
