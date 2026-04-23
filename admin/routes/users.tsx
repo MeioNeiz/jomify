@@ -1,5 +1,5 @@
 /** @jsxImportSource hono/jsx */
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import { accounts, bets, disputes, ledger, wagers } from "../../src/betting/schema.js";
 import { adjustBalance } from "../../src/betting/store/accounts.js";
@@ -20,6 +20,82 @@ import {
   Tr,
 } from "../views/components.js";
 import { page } from "../views/layout.js";
+
+// P&L-by-source categorisation. Keep in sync with reasons emitted by the
+// betting store. Any unknown reason (including `admin:*`) falls into
+// "Transfers + admin" via the matcher in buildPnlBySource.
+const PNL_CATEGORIES = [
+  {
+    key: "games",
+    label: "Games",
+    reasons: ["match", "starting-grant"],
+  },
+  {
+    key: "bets",
+    label: "Bets (as trader)",
+    reasons: [
+      "bet-placed",
+      "bet-payout",
+      "bet-refund",
+      "bet-cancel",
+      "bet-reverse",
+      "bet-sell",
+    ],
+  },
+  {
+    key: "lp",
+    label: "LP (as creator)",
+    reasons: ["creator-stake", "creator-settle", "creator-trader-bonus"],
+  },
+  {
+    key: "flips",
+    label: "Flips",
+    reasons: ["flip-stake", "flip-win", "flip-refund"],
+  },
+  {
+    key: "disputes",
+    label: "Disputes",
+    reasons: ["dispute-fee", "dispute-fee-refund"],
+  },
+  {
+    key: "transfers",
+    label: "Transfers + admin",
+    reasons: ["give-sent", "give-received"],
+    includeAdminPrefix: true,
+  },
+] as const;
+
+type PnlRow = { label: string; net: number; rows: number };
+
+function buildPnlBySource(discordId: string, guildId: string): PnlRow[] {
+  const grouped = db
+    .select({
+      reason: ledger.reason,
+      total: sum(ledger.delta),
+      n: count(),
+    })
+    .from(ledger)
+    .where(and(eq(ledger.discordId, discordId), eq(ledger.guildId, guildId)))
+    .groupBy(ledger.reason)
+    .all();
+
+  return PNL_CATEGORIES.map((cat) => {
+    let net = 0;
+    let rows = 0;
+    for (const g of grouped) {
+      const matches =
+        (cat.reasons as readonly string[]).includes(g.reason) ||
+        ("includeAdminPrefix" in cat &&
+          cat.includeAdminPrefix &&
+          g.reason.startsWith("admin:"));
+      if (matches) {
+        net += Number(g.total ?? 0);
+        rows += g.n;
+      }
+    }
+    return { label: cat.label, net, rows };
+  });
+}
 
 const router = new Hono<Env>();
 const PAGE_SIZE = 25;
@@ -171,6 +247,10 @@ router.get("/:guildId/:discordId", async (c) => {
     .where(and(eq(ledger.discordId, discordId), eq(ledger.guildId, guildId)))
     .all();
 
+  const pnlRows = buildPnlBySource(discordId, guildId);
+  const pnlNet = pnlRows.reduce((acc, r) => acc + r.net, 0);
+  const pnlMatches = pnlNet === acct.balance;
+
   const ledgerRows = db
     .select()
     .from(ledger)
@@ -232,7 +312,58 @@ router.get("/:guildId/:discordId", async (c) => {
             <div class="text-xs text-gray-400">shekels</div>
           </Card>
 
-          <Card class="md:col-span-2">
+          <Card>
+            <H2>P&amp;L by source</H2>
+            <div class="space-y-1.5 text-sm">
+              {pnlRows.map((r) => {
+                const cls =
+                  r.net > 0
+                    ? "text-green-400"
+                    : r.net < 0
+                      ? "text-red-400"
+                      : "text-gray-500";
+                return (
+                  <div class="flex items-baseline justify-between gap-2">
+                    <span class="text-gray-300">{r.label}</span>
+                    <span class="flex items-baseline gap-2">
+                      <span class={`font-medium ${cls}`}>
+                        {r.net > 0 ? "+" : ""}
+                        {r.net}
+                      </span>
+                      <span class="text-xs text-gray-500">
+                        {r.rows} row{r.rows === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+              <div class="flex items-baseline justify-between gap-2 pt-2 mt-1 border-t border-gray-800">
+                <span class="text-gray-300 font-medium">Net</span>
+                <span class="flex items-baseline gap-2">
+                  <span
+                    class={`font-bold ${pnlNet > 0 ? "text-green-400" : pnlNet < 0 ? "text-red-400" : "text-gray-500"}`}
+                  >
+                    {pnlNet > 0 ? "+" : ""}
+                    {pnlNet}
+                  </span>
+                  {pnlMatches ? (
+                    <span class="text-xs text-green-500" title="Matches balance">
+                      ✓
+                    </span>
+                  ) : (
+                    <span
+                      class="text-xs text-yellow-400"
+                      title={`Mismatch with balance ${acct.balance}`}
+                    >
+                      ⚠ {acct.balance}
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
             <H2>Adjust balance</H2>
             <form
               method="post"
