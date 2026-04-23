@@ -624,24 +624,6 @@ export function renderMarketView(
     descLines.push(`Closes <t:${unix}:R>`);
   }
 
-  if (bet.status === "open" && bet.b > 0) {
-    const stakes = [10, 50, 100];
-    const yesLadder = stakes
-      .map(
-        (s) =>
-          `${s}→${lmsrExpectedPayout(bet.qYes, bet.qNo, bet.b, s, "yes", LMSR_RAKE)}`,
-      )
-      .join(" · ");
-    const noLadder = stakes
-      .map(
-        (s) => `${s}→${lmsrExpectedPayout(bet.qYes, bet.qNo, bet.b, s, "no", LMSR_RAKE)}`,
-      )
-      .join(" · ");
-    descLines.push(
-      `💰 Payout ladder — ${MARKET_EMOJI.yes} ${yesLadder}  |  ${MARKET_EMOJI.no} ${noLadder}`,
-    );
-  }
-
   const openDispute = bet.status === "resolved" ? getOpenDisputeForBet(bet.id) : null;
   if (openDispute) {
     descLines.push(`\u26A0\uFE0F Dispute #${openDispute.id} pending admin ruling.`);
