@@ -15,6 +15,7 @@
 //   (declined)       legacy status kept for historical rows only.
 import { and, eq, lte, ne, or, sql } from "drizzle-orm";
 import db from "../db.js";
+import { InsufficientBalanceError } from "../errors.js";
 import { accounts, flips, ledger } from "../schema.js";
 
 export type FlipStatus = "open" | "accepted" | "declined" | "expired";
@@ -95,7 +96,7 @@ export function openFlip(args: {
       .get();
     const current = acct?.balance ?? 0;
     if (current < amount) {
-      throw new Error(`Insufficient balance: have ${current}, need ${amount}`);
+      throw new InsufficientBalanceError(current, amount);
     }
     tx.update(accounts)
       .set({ balance: current - amount })

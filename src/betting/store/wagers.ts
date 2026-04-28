@@ -6,6 +6,7 @@ import {
   STARTING_BALANCE,
 } from "../config.js";
 import db from "../db.js";
+import { InsufficientBalanceError } from "../errors.js";
 import { lmsrBuyShares, lmsrProb, lmsrSellRefund } from "../lmsr.js";
 import { accounts, bets, ledger, marketTicks, wagers } from "../schema.js";
 import type { Outcome } from "./bets.js";
@@ -95,7 +96,7 @@ export function placeWager(
     }
     const current = balance ?? STARTING_BALANCE;
     if (current < amount) {
-      throw new Error(`Insufficient balance: have ${current}, need ${amount}`);
+      throw new InsufficientBalanceError(current, amount);
     }
     tx.update(accounts)
       .set({ balance: current - amount })

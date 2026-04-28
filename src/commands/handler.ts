@@ -2,6 +2,8 @@ import type {
   ChatInputCommandInteraction,
   InteractionEditReplyOptions,
 } from "discord.js";
+import { InsufficientBalanceError } from "../betting/errors.js";
+import { CURRENCY } from "../betting/ui.js";
 import { LeetifyUnavailableError } from "../cs/leetify/client.js";
 import type { LeetifyProfile } from "../cs/leetify/types.js";
 import { getSteamId } from "../cs/store.js";
@@ -75,13 +77,23 @@ export function wrapCommand(fn: CommandFn, opts?: { defer?: boolean }): CommandF
         } catch (err) {
           const e = err as { code?: number; message?: string } | undefined;
           if (e?.code === 10062) return;
-          logError(`command:${interaction.commandName}`, err, {
-            userId: interaction.user.id,
-            guildId: interaction.guildId ?? undefined,
-          });
+          const userFault = err instanceof InsufficientBalanceError;
+          logError(
+            `command:${interaction.commandName}`,
+            err,
+            {
+              userId: interaction.user.id,
+              guildId: interaction.guildId ?? undefined,
+            },
+            userFault ? "warn" : "error",
+          );
 
           let msg = "Something went wrong.";
-          if (err instanceof LeetifyUnavailableError) {
+          if (err instanceof InsufficientBalanceError) {
+            msg =
+              `You've only got **${CURRENCY.format(err.have)}** \u2014 ` +
+              `not enough to stake **${CURRENCY.format(err.need)}**.`;
+          } else if (err instanceof LeetifyUnavailableError) {
             msg = "Leetify is down right now \u2014 try again in a minute.";
           } else if (e?.message?.includes("Leetify API error")) {
             msg = "Leetify API error \u2014 try again shortly.";

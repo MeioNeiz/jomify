@@ -3,7 +3,12 @@ import pino from "pino";
 import { config } from "./config.js";
 
 const isDev = process.env.NODE_ENV !== "production";
+const isTest = process.env.NODE_ENV === "test";
 const LOG_DIR = join(import.meta.dir, "..");
+// In tests, redirect file destinations to /dev/null so test runs don't
+// pollute the on-disk logs (or trigger the Healthchecks /fail ping
+// hooked to log.error below).
+const fileDest = (name: string) => (isTest ? "/dev/null" : join(LOG_DIR, name));
 
 const log = pino({
   level: "debug",
@@ -13,22 +18,19 @@ const log = pino({
       isDev
         ? { target: "pino-pretty", options: { colorize: true }, level: "info" }
         : { target: "pino/file", options: { destination: 1 }, level: "warn" },
-      // error.log — errors only
       {
         target: "pino/file",
-        options: { destination: join(LOG_DIR, "error.log") },
+        options: { destination: fileDest("error.log") },
         level: "error",
       },
-      // combined.log — everything info+
       {
         target: "pino/file",
-        options: { destination: join(LOG_DIR, "combined.log") },
+        options: { destination: fileDest("combined.log") },
         level: "info",
       },
-      // debug.log — everything including debug
       {
         target: "pino/file",
-        options: { destination: join(LOG_DIR, "debug.log") },
+        options: { destination: fileDest("debug.log") },
         level: "debug",
       },
     ],
@@ -41,7 +43,7 @@ const log = pino({
 // you open Discord.
 const originalError = log.error.bind(log);
 log.error = ((...args: unknown[]) => {
-  if (config.healthcheckUrl) {
+  if (config.healthcheckUrl && !isTest) {
     fetch(`${config.healthcheckUrl}/fail`, { method: "POST" }).catch(() => undefined);
   }
   return (originalError as (...a: unknown[]) => void)(...args);

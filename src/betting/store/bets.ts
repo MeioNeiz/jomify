@@ -9,6 +9,7 @@ import {
   TRADER_BONUS_CAP,
 } from "../config.js";
 import db from "../db.js";
+import { InsufficientBalanceError } from "../errors.js";
 import { lmsrInitShares } from "../lmsr.js";
 import { accounts, bets, ledger, wagers } from "../schema.js";
 
@@ -104,7 +105,7 @@ export function createBet(
     }
     const current = existing?.balance ?? STARTING_BALANCE;
     if (current < stake) {
-      throw new Error(`Insufficient balance: have ${current}, need ${stake} to stake`);
+      throw new InsufficientBalanceError(current, stake);
     }
     tx.update(accounts)
       .set({ balance: current - stake })
